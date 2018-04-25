@@ -58,7 +58,7 @@ func FromFile(name string, opts ...Option) core.ConfigProvider {
 		backend.configViper.SetConfigFile(name)
 
 		// If a config file is found, read it in.
-		err = backend.configViper.MergeInConfig()
+		err = backend.configViper.ReadInConfig()
 		if err != nil {
 			return nil, errors.Wrap(err, "loading config file failed")
 		}
@@ -90,7 +90,7 @@ func initFromReader(in io.Reader, configType string, opts ...Option) (core.Confi
 	// read config from bytes array, but must set ConfigType
 	// for viper to properly unmarshal the bytes array
 	backend.configViper.SetConfigType(configType)
-	err = backend.configViper.MergeConfig(in)
+	err = backend.configViper.ReadConfig(in)
 	if err != nil {
 		return nil, err
 	}

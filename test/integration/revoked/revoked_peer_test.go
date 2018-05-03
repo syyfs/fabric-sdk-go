@@ -93,7 +93,7 @@ func TestRevokedPeer(t *testing.T) {
 	}
 
 	// Org1 peers join channel
-	if err = org1ResMgmt.JoinChannel("orgchannel", resmgmt.WithRetry(retry.DefaultResMgmtOpts)); err != nil {
+	if err = org1ResMgmt.JoinChannel("orgchannel", resmgmt.WithRetry(retry.DefaultResMgmtOpts), resmgmt.WithOrdererURL("orderer.example.com")); err != nil {
 		t.Fatalf("Org1 peers failed to JoinChannel: %s", err)
 	}
 
@@ -104,7 +104,7 @@ func TestRevokedPeer(t *testing.T) {
 	}
 
 	// Org2 peers join channel
-	if err = org2ResMgmt.JoinChannel("orgchannel", resmgmt.WithRetry(retry.DefaultResMgmtOpts)); err != nil {
+	if err = org2ResMgmt.JoinChannel("orgchannel", resmgmt.WithRetry(retry.DefaultResMgmtOpts), resmgmt.WithOrdererURL("orderer.example.com")); err != nil {
 		t.Fatalf("Org2 peers failed to JoinChannel: %s", err)
 	}
 
@@ -166,7 +166,7 @@ func createChannel(org1AdminUser msp.SigningIdentity, org2AdminUser msp.SigningI
 	req := resmgmt.SaveChannelRequest{ChannelID: "orgchannel",
 		ChannelConfigPath: path.Join("../../../", metadata.ChannelConfigPath, "orgchannel.tx"),
 		SigningIdentities: []msp.SigningIdentity{org1AdminUser, org2AdminUser}}
-	txID, err := chMgmtClient.SaveChannel(req, resmgmt.WithRetry(retry.DefaultResMgmtOpts))
+	txID, err := chMgmtClient.SaveChannel(req, resmgmt.WithRetry(retry.DefaultResMgmtOpts), resmgmt.WithOrdererURL("orderer.example.com"))
 	require.Nil(t, err, "error should be nil")
 	require.NotEmpty(t, txID, "transaction ID should be populated")
 }
@@ -202,8 +202,8 @@ func loadOrgPeers(t *testing.T, ctxProvider contextAPI.ClientProvider) {
 
 func getConfigBackend(t *testing.T) core.ConfigProvider {
 
-	return func() (core.ConfigBackend, error) {
-		backend, err := config.FromFile(configPath)()
+	return func() ([]core.ConfigBackend, error) {
+		configBackends, err := config.FromFile(configPath)()
 		if err != nil {
 			t.Fatalf("failed to read config backend from file, %v", err)
 		}
@@ -211,25 +211,25 @@ func getConfigBackend(t *testing.T) core.ConfigProvider {
 
 		networkConfig := fab.NetworkConfig{}
 		//get valid peer config
-		err = lookup.New(backend).UnmarshalKey("peers", &networkConfig.Peers)
+		err = lookup.New(configBackends...).UnmarshalKey("peers", &networkConfig.Peers)
 		if err != nil {
 			t.Fatalf("failed to unmarshal peer network config, %v", err)
 		}
 
 		//customize peer0.org2 to peer1.org2
-		peer2 := networkConfig.Peers["local.peer0.org2.example.com"]
+		peer2 := networkConfig.Peers["peer0.org2.example.com"]
 		peer2.URL = "peer1.org2.example.com:9051"
 		peer2.EventURL = ""
 		peer2.GRPCOptions["ssl-target-name-override"] = "peer1.org2.example.com"
 
 		//remove peer0.org2
-		delete(networkConfig.Peers, "local.peer0.org2.example.com")
+		delete(networkConfig.Peers, "peer0.org2.example.com")
 
 		//add peer1.org2
-		networkConfig.Peers["local.peer1.org2.example.com"] = peer2
+		networkConfig.Peers["peer1.org2.example.com"] = peer2
 
 		//get valid org2
-		err = lookup.New(backend).UnmarshalKey("organizations", &networkConfig.Organizations)
+		err = lookup.New(configBackends...).UnmarshalKey("organizations", &networkConfig.Organizations)
 		if err != nil {
 			t.Fatalf("failed to unmarshal organizations network config, %v", err)
 		}
@@ -241,7 +241,7 @@ func getConfigBackend(t *testing.T) core.ConfigProvider {
 		networkConfig.Organizations["org2"] = org2
 
 		//custom channel
-		err = lookup.New(backend).UnmarshalKey("channels", &networkConfig.Channels)
+		err = lookup.New(configBackends...).UnmarshalKey("channels", &networkConfig.Channels)
 		if err != nil {
 			t.Fatalf("failed to unmarshal entityMatchers network config, %v", err)
 		}
@@ -256,29 +256,12 @@ func getConfigBackend(t *testing.T) core.ConfigProvider {
 		}
 		networkConfig.Channels[channelID] = orgChannel
 
-		//custom entity matchers
-		err = lookup.New(backend).UnmarshalKey("entityMatchers", &networkConfig.EntityMatchers)
-		if err != nil {
-			t.Fatalf("failed to unmarshal entityMatchers network config, %v", err)
-		}
-
-		peerEntityMatchers := networkConfig.EntityMatchers["peer"]
-		newMatch := fab.MatchConfig{
-			Pattern:                             "peer1.org2.example.com",
-			URLSubstitutionExp:                  "peer1.org2.example.com:9051",
-			EventURLSubstitutionExp:             "",
-			SSLTargetOverrideURLSubstitutionExp: "",
-			MappedHost:                          "local.peer1.org2.example.com",
-		}
-		peerEntityMatchers = append([]fab.MatchConfig{newMatch}, peerEntityMatchers...)
-		networkConfig.EntityMatchers["peer"] = peerEntityMatchers
-
 		//Customize backend with update peers, organizations, channels and entity matchers config
 		backendMap["peers"] = networkConfig.Peers
 		backendMap["organizations"] = networkConfig.Organizations
 		backendMap["channels"] = networkConfig.Channels
-		backendMap["entityMatchers"] = networkConfig.EntityMatchers
 
-		return &mocks.MockConfigBackend{KeyValueMap: backendMap, CustomBackend: backend}, nil
+		backends := append([]core.ConfigBackend{}, &mocks.MockConfigBackend{KeyValueMap: backendMap})
+		return append(backends, configBackends...), nil
 	}
 }

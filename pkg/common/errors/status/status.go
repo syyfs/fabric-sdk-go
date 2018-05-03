@@ -7,6 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 // Package status defines metadata for errors returned by fabric-sdk-go. This
 // information may be used by SDK users to make decisions about how to handle
 // certain error conditions.
+// Status codes are divided by group, where each group represents a particular
+// component and the codes correspond to those returned by the component.
+// These are defined in detail below.
 package status
 
 import (
@@ -79,16 +82,17 @@ const (
 
 // GroupName maps the groups in this packages to human-readable strings
 var GroupName = map[int32]string{
-	0: "Unknown",
-	1: "gRPC Transport Status",
-	2: "HTTP Transport Status",
-	3: "Endorser Server Status",
-	4: "Event Server Status",
-	5: "Orderer Server Status",
-	6: "Fabric CA Server Status",
-	7: "Endorser Client Status",
-	8: "Orderer Client Status",
-	9: "Client Status",
+	0:  "Unknown",
+	1:  "gRPC Transport Status",
+	2:  "HTTP Transport Status",
+	3:  "Endorser Server Status",
+	4:  "Event Server Status",
+	5:  "Orderer Server Status",
+	6:  "Fabric CA Server Status",
+	7:  "Endorser Client Status",
+	8:  "Orderer Client Status",
+	9:  "Client Status",
+	10: "Chaincode status",
 }
 
 func (g Group) String() string {

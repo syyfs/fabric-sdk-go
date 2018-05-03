@@ -77,16 +77,19 @@ func (setup *BaseSetupImpl) Initialize(sdk *fabsdk.FabricSDK) error {
 	}
 	setup.Identity = adminIdentity
 
+	var cfgBackends []core.ConfigBackend
 	configBackend, err := sdk.Config()
 	if err != nil {
 		//For some tests SDK may not have backend set, try with config file if backend is missing
-		configBackend, err = ConfigBackend()
+		cfgBackends, err = ConfigBackend()
 		if err != nil {
 			return errors.Wrapf(err, "failed to get config backend from config: %v", err)
 		}
+	} else {
+		cfgBackends = append(cfgBackends, configBackend)
 	}
 
-	targets, err := getOrgTargets(configBackend, setup.OrgID)
+	targets, err := OrgTargetPeers([]string{setup.OrgID}, cfgBackends...)
 	if err != nil {
 		return errors.Wrapf(err, "loading target peers from config failed")
 	}
@@ -110,25 +113,6 @@ func (setup *BaseSetupImpl) Initialize(sdk *fabsdk.FabricSDK) error {
 	}
 
 	return nil
-}
-
-func getOrgTargets(configBackend core.ConfigBackend, org string) ([]string, error) {
-
-	endpointConfig, err := fab.ConfigFromBackend(configBackend)
-	if err != nil {
-		return nil, errors.WithMessage(err, "reading config failed")
-	}
-
-	var targets []string
-
-	peerConfig, err := endpointConfig.PeersConfig(org)
-	if err != nil {
-		return nil, errors.WithMessage(err, "reading peer config failed")
-	}
-	for _, p := range peerConfig {
-		targets = append(targets, p.URL)
-	}
-	return targets, nil
 }
 
 // GetDeployPath ..

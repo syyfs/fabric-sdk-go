@@ -97,39 +97,19 @@ func (c *MockConfig) CAConfig(org string) (*msp.CAConfig, error) {
 	return &caConfig, nil
 }
 
-//CAServerCertPems Read configuration option for the server certificate embedded pems
-func (c *MockConfig) CAServerCertPems(org string) ([]string, error) {
+//CAServerCerts Read configuration option for the server certificates for given org
+func (c *MockConfig) CAServerCerts(org string) ([][]byte, error) {
 	return nil, nil
 }
 
-//CAServerCertPaths Read configuration option for the server certificate files
-func (c *MockConfig) CAServerCertPaths(org string) ([]string, error) {
+//CAClientKey Read configuration option for the fabric CA client key for given org
+func (c *MockConfig) CAClientKey(org string) ([]byte, error) {
 	return nil, nil
 }
 
-//CAClientKeyPem Read configuration option for the fabric CA client key from a string
-func (c *MockConfig) CAClientKeyPem(org string) (string, error) {
-	return "", nil
-}
-
-//CAClientKeyPath Read configuration option for the fabric CA client key file
-func (c *MockConfig) CAClientKeyPath(org string) (string, error) {
-	return "", nil
-}
-
-//CAClientCertPem Read configuration option for the fabric CA client cert from a string
-func (c *MockConfig) CAClientCertPem(org string) (string, error) {
-	return "", nil
-}
-
-//CAClientCertPath Read configuration option for the fabric CA client cert file
-func (c *MockConfig) CAClientCertPath(org string) (string, error) {
-	return "", nil
-}
-
-//TimeoutOrDefault not implemented
-func (c *MockConfig) TimeoutOrDefault(arg fab.TimeoutType) time.Duration {
-	return time.Second * 5
+//CAClientCert Read configuration option for the fabric CA client cert for given org
+func (c *MockConfig) CAClientCert(org string) ([]byte, error) {
+	return nil, nil
 }
 
 //Timeout not implemented
@@ -143,13 +123,9 @@ func (c *MockConfig) PeersConfig(org string) ([]fab.PeerConfig, error) {
 }
 
 // PeerConfig Retrieves a specific peer from the configuration by org and name
-func (c *MockConfig) PeerConfig(org string, name string) (*fab.PeerConfig, error) {
-	return nil, nil
-}
+func (c *MockConfig) PeerConfig(nameOrURL string) (*fab.PeerConfig, error) {
 
-// PeerConfigByURL retrieves PeerConfig by URL
-func (c *MockConfig) PeerConfigByURL(url string) (*fab.PeerConfig, error) {
-	if url == "invalid" {
+	if nameOrURL == "invalid" {
 		return nil, errors.New("no peer")
 	}
 	if c.customPeerCfg != nil {
@@ -309,7 +285,7 @@ func (c *MockConfig) NetworkPeers() ([]fab.NetworkPeer, error) {
 
 // SecurityProvider ...
 func (c *MockConfig) SecurityProvider() string {
-	return "SW"
+	return "sw"
 }
 
 // SecurityProviderLabel ...

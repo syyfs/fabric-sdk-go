@@ -4,7 +4,19 @@ Copyright SecureKey Technologies Inc. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 
-// Package resmgmt enables ability to update resources in a Fabric network.
+// Package resmgmt enables creation and update of resources on a Fabric network.
+// It allows administrators to create and/or update channnels, and for peers to join channels.
+// Administrators can also perform chaincode related operations on a peer, such as
+// installing, instantiating, and upgrading chaincode.
+//
+//  Basic Flow:
+//  1) Prepare client context
+//  2) Create resource managememt client
+//  3) Create new channel
+//  4) Peer(s) join channel
+//  5) Install chaincode onto peer(s) filesystem
+//  6) Instantiate chaincode on channel
+//  7) Query peer for channels, installed/instantiated chaincodes etc.
 package resmgmt
 
 import (
@@ -62,7 +74,7 @@ type InstantiateCCRequest struct {
 	CollConfig []*common.CollectionConfig
 }
 
-// InstantiateCCResponse contains response parameters for Instantiate
+// InstantiateCCResponse contains response parameters for instantiate chaincode
 type InstantiateCCResponse struct {
 	TransactionID fab.TransactionID
 }
@@ -77,7 +89,7 @@ type UpgradeCCRequest struct {
 	CollConfig []*common.CollectionConfig
 }
 
-// UpgradeCCResponse contains response parameters for Upgrade
+// UpgradeCCResponse contains response parameters for upgrade chaincode
 type UpgradeCCResponse struct {
 	TransactionID fab.TransactionID
 }
@@ -92,7 +104,7 @@ type requestOptions struct {
 	Retry         retry.Opts
 }
 
-//SaveChannelRequest used to save channel request
+//SaveChannelRequest holds parameters for save channel request
 type SaveChannelRequest struct {
 	ChannelID         string
 	ChannelConfig     io.Reader             // ChannelConfig data source
@@ -101,7 +113,7 @@ type SaveChannelRequest struct {
 	// TODO: support pre-signed signature blocks
 }
 
-// SaveChannelResponse contains response parameters for Save
+// SaveChannelResponse contains response parameters for save channel
 type SaveChannelResponse struct {
 	TransactionID fab.TransactionID
 }
@@ -113,12 +125,12 @@ var logger = logging.NewLogger("fabsdk/client")
 
 // Client enables managing resources in Fabric network.
 type Client struct {
-	ctx       context.Client
-	discovery fab.DiscoveryService // global discovery service (detects all peers on the network)
-	filter    fab.TargetFilter
+	ctx              context.Client
+	filter           fab.TargetFilter
+	localCtxProvider context.LocalProvider
 }
 
-// mspFilter is default filter
+// mspFilter filters peers by MSP ID
 type mspFilter struct {
 	mspID string
 }
@@ -131,7 +143,7 @@ func (f *mspFilter) Accept(peer fab.Peer) bool {
 // ClientOption describes a functional parameter for the New constructor
 type ClientOption func(*Client) error
 
-// WithDefaultTargetFilter option to configure new
+// WithDefaultTargetFilter option to configure default target filter per client
 func WithDefaultTargetFilter(filter fab.TargetFilter) ClientOption {
 	return func(rmc *Client) error {
 		rmc.filter = filter
@@ -139,12 +151,16 @@ func WithDefaultTargetFilter(filter fab.TargetFilter) ClientOption {
 	}
 }
 
-// New returns a ResourceMgmtClient instance
-func New(clientProvider context.ClientProvider, opts ...ClientOption) (*Client, error) {
+// New returns a resource management client instance.
+func New(ctxProvider context.ClientProvider, opts ...ClientOption) (*Client, error) {
 
-	ctx, err := clientProvider()
+	ctx, err := ctxProvider()
 	if err != nil {
-		return nil, errors.WithMessage(err, "failed to create resmgmt client")
+		return nil, errors.WithMessage(err, "failed to create resmgmt client due to context error")
+	}
+
+	if ctx.Identifier().MSPID == "" {
+		return nil, errors.New("mspID not available in user context")
 	}
 
 	resourceClient := &Client{
@@ -158,25 +174,26 @@ func New(clientProvider context.ClientProvider, opts ...ClientOption) (*Client, 
 		}
 	}
 
-	// setup global discovery service
-	discovery, err := ctx.DiscoveryProvider().CreateDiscoveryService("")
-	if err != nil {
-		return nil, errors.WithMessage(err, "failed to create global discovery service")
-	}
-	resourceClient.discovery = discovery
-	//check if target filter was set - if not set the default
-	if resourceClient.filter == nil {
-		// Default target filter is based on user msp
-		if ctx.Identifier().MSPID == "" {
-			return nil, errors.New("mspID not available in user context")
+	if resourceClient.localCtxProvider == nil {
+		resourceClient.localCtxProvider = func() (context.Local, error) {
+			return contextImpl.NewLocal(
+				func() (context.Client, error) {
+					return resourceClient.ctx, nil
+				},
+			)
 		}
-		rcFilter := &mspFilter{mspID: ctx.Identifier().MSPID}
-		resourceClient.filter = rcFilter
 	}
+
 	return resourceClient, nil
 }
 
-// JoinChannel allows for peers to join existing channel with optional custom options (specific peers, filtered peers)
+// JoinChannel allows for peers to join existing channel with optional custom options (specific peers, filtered peers). If peer(s) are not specified in options it will default to all peers that belong to client's MSP.
+//  Parameters:
+//  channel is manadatory channel name
+//  options holds optional request options
+//
+//  Returns:
+//  an error if join fails
 func (rc *Client) JoinChannel(channelID string, options ...RequestOption) error {
 
 	if channelID == "" {
@@ -196,7 +213,7 @@ func (rc *Client) JoinChannel(channelID string, options ...RequestOption) error 
 	parentReqCtx = reqContext.WithValue(parentReqCtx, contextImpl.ReqContextTimeoutOverrides, opts.Timeouts)
 	defer parentReqCancel()
 
-	targets, err := rc.calculateTargets(rc.discovery, opts.Targets, opts.TargetFilter)
+	targets, err := rc.calculateTargets(opts.Targets, opts.TargetFilter)
 	if err != nil {
 		return errors.WithMessage(err, "failed to determine target peers for JoinChannel")
 	}
@@ -249,6 +266,27 @@ func filterTargets(peers []fab.Peer, filter fab.TargetFilter) []fab.Peer {
 	return filteredPeers
 }
 
+func (rc *Client) resolveDefaultTargets(opts *requestOptions) ([]fab.Peer, error) {
+	if len(opts.Targets) != 0 {
+		return opts.Targets, nil
+	}
+
+	localCtx, err := rc.localCtxProvider()
+	if err != nil {
+		return nil, errors.WithMessage(err, "failed to create local context")
+	}
+
+	targets, err := rc.getDefaultTargets(localCtx.LocalDiscoveryService())
+	if err != nil {
+		return nil, err
+	}
+	if len(targets) == 0 {
+		return nil, errors.WithMessage(err, "no local targets for InstallCC")
+	}
+
+	return targets, nil
+}
+
 // helper method for calculating default targets
 func (rc *Client) getDefaultTargets(discovery fab.DiscoveryService) ([]fab.Peer, error) {
 
@@ -266,19 +304,17 @@ func (rc *Client) getDefaultTargets(discovery fab.DiscoveryService) ([]fab.Peer,
 }
 
 // calculateTargets calculates targets based on targets and filter
-func (rc *Client) calculateTargets(discovery fab.DiscoveryService, peers []fab.Peer, filter fab.TargetFilter) ([]fab.Peer, error) {
+func (rc *Client) calculateTargets(targets []fab.Peer, filter fab.TargetFilter) ([]fab.Peer, error) {
 
-	if peers != nil && filter != nil {
-		return nil, errors.New("If targets are provided, filter cannot be provided")
-	}
-
-	targets := peers
 	targetFilter := filter
 
-	var err error
-	if targets == nil {
+	if len(targets) == 0 {
 		// Retrieve targets from discovery
-		targets, err = discovery.GetPeers()
+		localCtx, err := rc.localCtxProvider()
+		if err != nil {
+			return nil, errors.WithMessage(err, "failed to create local context")
+		}
+		targets, err = localCtx.LocalDiscoveryService().GetPeers()
 		if err != nil {
 			return nil, err
 		}
@@ -314,7 +350,14 @@ func (rc *Client) isChaincodeInstalled(reqCtx reqContext.Context, req InstallCCR
 	return false, nil
 }
 
-// InstallCC installs chaincode with optional custom options (specific peers, filtered peers)
+// InstallCC allows administrators to install chaincode onto the filesystem of a peer.
+// If peer(s) are not specified in options it will default to all peers that belong to admin's MSP.
+//  Parameters:
+//  req holds info about mandatory chaincode name, path, version and policy
+//  options holds optional request options
+//
+//  Returns:
+//  install chaincode proposal responses from peer(s)
 func (rc *Client) InstallCC(req InstallCCRequest, options ...RequestOption) ([]InstallCCResponse, error) {
 	// For each peer query if chaincode installed. If cc is installed treat as success with message 'already installed'.
 	// If cc is not installed try to install, and if that fails add to the list with error and peer name.
@@ -338,14 +381,12 @@ func (rc *Client) InstallCC(req InstallCCRequest, options ...RequestOption) ([]I
 	defer parentReqCancel()
 
 	//Default targets when targets are not provided in options
-	if len(opts.Targets) == 0 {
-		opts.Targets, err = rc.getDefaultTargets(rc.discovery)
-		if err != nil {
-			return nil, errors.WithMessage(err, "failed to get default targets for InstallCC")
-		}
+	defaultTargets, err := rc.resolveDefaultTargets(&opts)
+	if err != nil {
+		return nil, errors.WithMessage(err, "failed to get default targets for InstallCC")
 	}
 
-	targets, err := rc.calculateTargets(rc.discovery, opts.Targets, opts.TargetFilter)
+	targets, err := rc.calculateTargets(defaultTargets, opts.TargetFilter)
 	if err != nil {
 		return nil, errors.WithMessage(err, "failed to determine target peers for install cc")
 	}
@@ -429,7 +470,15 @@ func checkRequiredInstallCCParams(req InstallCCRequest) error {
 	return nil
 }
 
-// InstantiateCC instantiates chaincode using default settings
+// InstantiateCC instantiates chaincode with optional custom options (specific peers, filtered peers, timeout). If peer(s) are not specified
+// in options it will default to all channel peers.
+//  Parameters:
+//  channel is manadatory channel name
+//  req holds info about mandatory chaincode name, path, version and policy
+//  options holds optional request options
+//
+//  Returns:
+//  instantiate chaincode response with transaction ID
 func (rc *Client) InstantiateCC(channelID string, req InstantiateCCRequest, options ...RequestOption) (InstantiateCCResponse, error) {
 
 	opts, err := rc.prepareRequestOpts(options...)
@@ -444,7 +493,15 @@ func (rc *Client) InstantiateCC(channelID string, req InstantiateCCRequest, opti
 	return InstantiateCCResponse{TransactionID: txID}, err
 }
 
-// UpgradeCC upgrades chaincode  with optional custom options (specific peers, filtered peers, timeout)
+// UpgradeCC upgrades chaincode with optional custom options (specific peers, filtered peers, timeout). If peer(s) are not specified in options
+// it will default to all channel peers.
+//  Parameters:
+//  channel is manadatory channel name
+//  req holds info about mandatory chaincode name, path, version and policy
+//  options holds optional request options
+//
+//  Returns:
+//  upgrade chaincode response with transaction ID
 func (rc *Client) UpgradeCC(channelID string, req UpgradeCCRequest, options ...RequestOption) (UpgradeCCResponse, error) {
 
 	opts, err := rc.prepareRequestOpts(options...)
@@ -460,7 +517,12 @@ func (rc *Client) UpgradeCC(channelID string, req UpgradeCCRequest, options ...R
 }
 
 // QueryInstalledChaincodes queries the installed chaincodes on a peer.
-// Returns the details of all chaincodes installed on a peer.
+//  Parameters:
+//  options hold optional request options
+//  Note: One target(peer) has to be specified using either WithTargetURLs or WithTargets request option
+//
+//  Returns:
+//  list of installed chaincodes on specified peer
 func (rc *Client) QueryInstalledChaincodes(options ...RequestOption) (*pb.ChaincodeQueryResponse, error) {
 
 	opts, err := rc.prepareRequestOpts(options...)
@@ -478,8 +540,13 @@ func (rc *Client) QueryInstalledChaincodes(options ...RequestOption) (*pb.Chainc
 	return resource.QueryInstalledChaincodes(reqCtx, opts.Targets[0], resource.WithRetry(opts.Retry))
 }
 
-// QueryInstantiatedChaincodes queries the instantiated chaincodes on a peer for specific channel.
-// Valid option is WithTarget. If not specified it will query any peer on this channel
+// QueryInstantiatedChaincodes queries the instantiated chaincodes on a peer for specific channel. If peer is not specified in options it will query random peer on this channel.
+//  Parameters:
+//  channel is manadatory channel name
+//  options hold optional request options
+//
+//  Returns:
+//  list of instantiated chaincodes
 func (rc *Client) QueryInstantiatedChaincodes(channelID string, options ...RequestOption) (*pb.ChaincodeQueryResponse, error) {
 
 	opts, err := rc.prepareRequestOpts(options...)
@@ -487,19 +554,33 @@ func (rc *Client) QueryInstantiatedChaincodes(channelID string, options ...Reque
 		return nil, err
 	}
 
+	chCtx, err := contextImpl.NewChannel(
+		func() (context.Client, error) {
+			return rc.ctx, nil
+		},
+		channelID,
+	)
+	if err != nil {
+		return nil, errors.WithMessage(err, "failed to create channel context")
+	}
+
 	var target fab.ProposalProcessor
 	if len(opts.Targets) >= 1 {
 		target = opts.Targets[0]
 	} else {
 		// discover peers on this channel
-		discovery, err1 := rc.ctx.DiscoveryProvider().CreateDiscoveryService(channelID)
-		if err1 != nil {
-			return nil, errors.WithMessage(err1, "failed to create channel discovery service")
-		}
+		discovery := chCtx.DiscoveryService()
 		// default filter will be applied (if any)
 		targets, err2 := rc.getDefaultTargets(discovery)
 		if err2 != nil {
 			return nil, errors.WithMessage(err2, "failed to get default target for query instantiated chaincodes")
+		}
+
+		// Filter by MSP since the LSCC only allows local calls
+		targets = filterTargets(targets, &mspFilter{mspID: chCtx.Identifier().MSPID})
+
+		if len(targets) == 0 {
+			return nil, errors.Errorf("no targets in MSP [%s]", chCtx.Identifier().MSPID)
 		}
 
 		// select random channel peer
@@ -516,10 +597,7 @@ func (rc *Client) QueryInstantiatedChaincodes(channelID string, options ...Reque
 	defer cancel()
 
 	// Channel service membership is required to verify signature
-	channelService, err := rc.ctx.ChannelProvider().ChannelService(rc.ctx, channelID)
-	if err != nil {
-		return nil, errors.WithMessage(err, "Unable to get channel service")
-	}
+	channelService := chCtx.ChannelService()
 
 	membership, err := channelService.Membership()
 	if err != nil {
@@ -535,7 +613,12 @@ func (rc *Client) QueryInstantiatedChaincodes(channelID string, options ...Reque
 }
 
 // QueryChannels queries the names of all the channels that a peer has joined.
-// Returns the details of all channels that peer has joined.
+//  Parameters:
+//  options hold optional request options
+//  Note: One target(peer) has to be specified using either WithTargetURLs or WithTargets request option
+//
+//  Returns:
+//  all channels that peer has joined
 func (rc *Client) QueryChannels(options ...RequestOption) (*pb.ChannelQueryResponse, error) {
 
 	opts, err := rc.prepareRequestOpts(options...)
@@ -557,11 +640,18 @@ func (rc *Client) QueryChannels(options ...RequestOption) (*pb.ChannelQueryRespo
 // validateSendCCProposal
 func (rc *Client) getCCProposalTargets(channelID string, req InstantiateCCRequest, opts requestOptions) ([]fab.Peer, error) {
 
-	// per channel discovery service
-	discovery, err := rc.ctx.DiscoveryProvider().CreateDiscoveryService(channelID)
+	chCtx, err := contextImpl.NewChannel(
+		func() (context.Client, error) {
+			return rc.ctx, nil
+		},
+		channelID,
+	)
 	if err != nil {
-		return nil, errors.WithMessage(err, "failed to create channel discovery service")
+		return nil, errors.WithMessage(err, "failed to create channel context")
 	}
+
+	// per channel discovery service
+	discovery := chCtx.DiscoveryService()
 
 	//Default targets when targets are not provided in options
 	if len(opts.Targets) == 0 {
@@ -571,7 +661,7 @@ func (rc *Client) getCCProposalTargets(channelID string, req InstantiateCCReques
 		}
 	}
 
-	targets, err := rc.calculateTargets(discovery, opts.Targets, opts.TargetFilter)
+	targets, err := rc.calculateTargets(opts.Targets, opts.TargetFilter)
 	if err != nil {
 		return nil, errors.WithMessage(err, "failed to determine target peers for cc proposal")
 	}
@@ -654,7 +744,7 @@ func (rc *Client) sendCCProposal(reqCtx reqContext.Context, ccProposalType chain
 	// Verify signature(s)
 	err = rc.verifyTPSignature(channelService, txProposalResponse)
 	if err != nil {
-		return tp.TxnID, errors.WithMessage(err, "sending deploy transaction proposal failed")
+		return tp.TxnID, errors.WithMessage(err, "sending deploy transaction proposal failed to verify signature")
 	}
 
 	eventService, err := channelService.EventService()
@@ -733,7 +823,13 @@ func peersToTxnProcessors(peers []fab.Peer) []fab.ProposalProcessor {
 	return tpp
 }
 
-// SaveChannel creates or updates channel
+// SaveChannel creates or updates channel.
+//  Parameters:
+//  req holds info about mandatory channel name and configuration
+//  options holds optional request options
+//
+//  Returns:
+//  save channel response with transaction ID
 func (rc *Client) SaveChannel(req SaveChannelRequest, options ...RequestOption) (SaveChannelResponse, error) {
 
 	opts, err := rc.prepareRequestOpts(options...)
@@ -847,9 +943,13 @@ func loggedClose(c io.Closer) {
 	}
 }
 
-// QueryConfigFromOrderer config returns channel configuration from orderer
-// Valid request option is WithOrdererID
-// If orderer id is not provided orderer will be defaulted to channel orderer (if configured) or random orderer from config
+// QueryConfigFromOrderer config returns channel configuration from orderer. If orderer is not provided using options it will be defaulted to channel orderer (if configured) or random orderer from configuration.
+//  Parameters:
+//  channelID is mandatory channel ID
+//  options holds optional request options
+//
+//  Returns:
+//  channel configuration
 func (rc *Client) QueryConfigFromOrderer(channelID string, options ...RequestOption) (fab.ChannelCfg, error) {
 
 	opts, err := rc.prepareRequestOpts(options...)
@@ -919,9 +1019,14 @@ func (rc *Client) prepareRequestOpts(options ...RequestOption) (requestOptions, 
 	for _, option := range options {
 		err := option(rc.ctx, &opts)
 		if err != nil {
-			return opts, errors.WithMessage(err, "Failed to read opts")
+			return opts, errors.WithMessage(err, "failed to read opts in resmgmt")
 		}
 	}
+
+	if len(opts.Targets) > 0 && opts.TargetFilter != nil {
+		return opts, errors.New("If targets are provided, filter cannot be provided")
+	}
+
 	return opts, nil
 }
 

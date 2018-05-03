@@ -9,14 +9,16 @@ package lookup
 import (
 	"time"
 
+	"strings"
+
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/core"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/cast"
 )
 
 //New providers lookup wrapper around given backend
-func New(coreBackend core.ConfigBackend) *ConfigLookup {
-	return &ConfigLookup{backend: coreBackend}
+func New(coreBackends ...core.ConfigBackend) *ConfigLookup {
+	return &ConfigLookup{backends: coreBackends}
 }
 
 //unmarshalOpts opts for unmarshal key function
@@ -37,17 +39,27 @@ func WithUnmarshalHookFunction(hookFunction mapstructure.DecodeHookFunc) Unmarsh
 
 //ConfigLookup is wrapper for core.ConfigBackend which performs key lookup and unmarshalling
 type ConfigLookup struct {
-	backend core.ConfigBackend
+	backends []core.ConfigBackend
 }
 
 //Lookup returns value for given key
 func (c *ConfigLookup) Lookup(key string) (interface{}, bool) {
-	return c.backend.Lookup(key)
+	//loop through each backend to find the value by key, fallback to next one if not found
+	for _, backend := range c.backends {
+		if backend == nil {
+			continue
+		}
+		val, ok := backend.Lookup(key)
+		if ok {
+			return val, true
+		}
+	}
+	return nil, false
 }
 
 //GetBool returns bool value for given key
 func (c *ConfigLookup) GetBool(key string) bool {
-	value, ok := c.backend.Lookup(key)
+	value, ok := c.Lookup(key)
 	if !ok {
 		return false
 	}
@@ -56,16 +68,25 @@ func (c *ConfigLookup) GetBool(key string) bool {
 
 //GetString returns string value for given key
 func (c *ConfigLookup) GetString(key string) string {
-	value, ok := c.backend.Lookup(key)
+	value, ok := c.Lookup(key)
 	if !ok {
 		return ""
 	}
 	return cast.ToString(value)
 }
 
+//GetLowerString returns lower case string value for given key
+func (c *ConfigLookup) GetLowerString(key string) string {
+	value, ok := c.Lookup(key)
+	if !ok {
+		return ""
+	}
+	return strings.ToLower(cast.ToString(value))
+}
+
 //GetInt returns int value for given key
 func (c *ConfigLookup) GetInt(key string) int {
-	value, ok := c.backend.Lookup(key)
+	value, ok := c.Lookup(key)
 	if !ok {
 		return 0
 	}
@@ -74,7 +95,7 @@ func (c *ConfigLookup) GetInt(key string) int {
 
 //GetDuration returns time.Duration value for given key
 func (c *ConfigLookup) GetDuration(key string) time.Duration {
-	value, ok := c.backend.Lookup(key)
+	value, ok := c.Lookup(key)
 	if !ok {
 		return 0
 	}
@@ -83,7 +104,7 @@ func (c *ConfigLookup) GetDuration(key string) time.Duration {
 
 //UnmarshalKey unmarshals value for given key to rawval type
 func (c *ConfigLookup) UnmarshalKey(key string, rawVal interface{}, opts ...UnmarshalOption) error {
-	value, ok := c.backend.Lookup(key)
+	value, ok := c.Lookup(key)
 	if !ok {
 		return nil
 	}

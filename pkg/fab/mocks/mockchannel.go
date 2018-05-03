@@ -59,7 +59,7 @@ func NewMockChannel(channelID string) (*Channel, error) {
 
 	ctx := &mockClientContext{
 		Providers:       NewMockProviderContext(),
-		SigningIdentity: mspmocks.NewMockSigningIdentity("user", "user"),
+		SigningIdentity: mspmocks.NewMockSigningIdentity("user", "Org1MSP"),
 	}
 
 	// Set up mock channel service
@@ -72,13 +72,9 @@ func NewMockChannel(channelID string) (*Channel, error) {
 		return nil, errors.WithMessage(err, "failed to create mock channel service")
 	}
 
-	peers := []fab.Peer{NewMockPeer("Peer1", "http://peer1.com")}
-
+	peers := []fab.Peer{NewMockPeer("Peer1", "example.com")}
 	// Set up mock discovery service
-	mockDiscovery, err := NewMockDiscoveryProvider(nil, peers)
-	if err != nil {
-		return nil, errors.WithMessage(err, "NewMockDiscoveryProvider failed")
-	}
+	mockDiscovery := NewMockDiscoveryProvider(nil, peers)
 	discoveryService, err := mockDiscovery.CreateDiscoveryService(channelID)
 	if err != nil {
 		return nil, errors.WithMessage(err, "failed to create discovery service")

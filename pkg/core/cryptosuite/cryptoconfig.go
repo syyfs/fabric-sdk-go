@@ -17,8 +17,8 @@ import (
 )
 
 //ConfigFromBackend returns CryptoSuite config implementation for given backend
-func ConfigFromBackend(coreBackend core.ConfigBackend) core.CryptoSuiteConfig {
-	return &Config{backend: lookup.New(coreBackend)}
+func ConfigFromBackend(coreBackend ...core.ConfigBackend) core.CryptoSuiteConfig {
+	return &Config{backend: lookup.New(coreBackend...)}
 }
 
 // Config represents the crypto suite configuration for the client
@@ -43,7 +43,7 @@ func (c *Config) SecurityLevel() int {
 
 //SecurityProvider provider SW or PKCS11
 func (c *Config) SecurityProvider() string {
-	return c.backend.GetString("client.BCCSP.security.default.provider")
+	return c.backend.GetLowerString("client.BCCSP.security.default.provider")
 }
 
 //SoftVerify flag

@@ -77,7 +77,7 @@ func TestExpiredPeersCert(t *testing.T) {
 	req := resmgmt.SaveChannelRequest{ChannelID: "orgchannel",
 		ChannelConfigPath: path.Join("../../../", metadata.ChannelConfigPath, "orgchannel.tx"),
 		SigningIdentities: []msp.SigningIdentity{org1AdminUser, org2AdminUser}}
-	txID, err := chMgmtClient.SaveChannel(req, resmgmt.WithRetry(retry.DefaultResMgmtOpts))
+	txID, err := chMgmtClient.SaveChannel(req, resmgmt.WithRetry(retry.DefaultResMgmtOpts), resmgmt.WithOrdererURL("orderer.example.com"))
 	require.Nil(t, err, "error should be nil")
 	require.NotEmpty(t, txID, "transaction ID should be populated")
 
@@ -97,8 +97,8 @@ func TestExpiredPeersCert(t *testing.T) {
 
 func getConfigBackend(t *testing.T) core.ConfigProvider {
 
-	return func() (core.ConfigBackend, error) {
-		backend, err := config.FromFile(configPath)()
+	return func() ([]core.ConfigBackend, error) {
+		configBackends, err := config.FromFile(configPath)()
 		if err != nil {
 			t.Fatalf("failed to read config backend from file, %v", err)
 		}
@@ -106,16 +106,17 @@ func getConfigBackend(t *testing.T) core.ConfigProvider {
 
 		networkConfig := fab.NetworkConfig{}
 		//get valid peer config
-		err = lookup.New(backend).UnmarshalKey("peers", &networkConfig.Peers)
+		err = lookup.New(configBackends...).UnmarshalKey("peers", &networkConfig.Peers)
 		if err != nil {
 			t.Fatalf("failed to unmarshal peer network config, %v", err)
 		}
 		//change cert path to expired one
-		peer1 := networkConfig.Peers["local.peer0.org1.example.com"]
+		peer1 := networkConfig.Peers["peer0.org1.example.com"]
 		peer1.TLSCACerts.Path = expiredCertPath
-		networkConfig.Peers["local.peer0.org1.example.com"] = peer1
+		networkConfig.Peers["peer0.org1.example.com"] = peer1
 		backendMap["peers"] = networkConfig.Peers
 
-		return &mocks.MockConfigBackend{KeyValueMap: backendMap, CustomBackend: backend}, nil
+		backends := append([]core.ConfigBackend{}, &mocks.MockConfigBackend{KeyValueMap: backendMap})
+		return append(backends, configBackends...), nil
 	}
 }

@@ -38,10 +38,21 @@ const (
 
 // Run enables testing an end-to-end scenario against the supplied SDK options
 func Run(t *testing.T, configOpt core.ConfigProvider, sdkOpts ...fabsdk.Option) {
+	setupAndRun(t, true, configOpt, sdkOpts...)
+}
 
-	if integration.IsLocal() {
+// RunWithoutSetup will execute the same way as Run but without creating a new channel and registering a new CC
+func RunWithoutSetup(t *testing.T, configOpt core.ConfigProvider, sdkOpts ...fabsdk.Option) {
+	setupAndRun(t, false, configOpt, sdkOpts...)
+}
+
+// setupAndRun enables testing an end-to-end scenario against the supplied SDK options
+// the doSetup flag will be used to either create a channel and the example CC or not(ie run the tests with existing ch and CC)
+func setupAndRun(t *testing.T, doSetup bool, configOpt core.ConfigProvider, sdkOpts ...fabsdk.Option) {
+
+	if integration.IsLocal() && doSetup {
 		//If it is a local test then add entity mapping to config backend to parse URLs
-		configOpt = integration.AddLocalEntityMapping(configOpt)
+		configOpt = integration.AddLocalEntityMapping(configOpt, integration.LocalOrdererPeersCAsConfig)
 	}
 
 	sdk, err := fabsdk.New(configOpt, sdkOpts...)
@@ -55,38 +66,9 @@ func Run(t *testing.T, configOpt core.ConfigProvider, sdkOpts ...fabsdk.Option) 
 	integration.CleanupUserData(t, sdk)
 	defer integration.CleanupUserData(t, sdk)
 
-	//clientContext allows creation of transactions using the supplied identity as the credential.
-	clientContext := sdk.Context(fabsdk.WithUser(orgAdmin), fabsdk.WithOrg(ordererOrgName))
-
-	// Resource management client is responsible for managing channels (create/update channel)
-	// Supply user that has privileges to create channel (in this case orderer admin)
-	resMgmtClient, err := resmgmt.New(clientContext)
-	if err != nil {
-		t.Fatalf("Failed to create channel management client: %s", err)
+	if doSetup {
+		createChannelAndCC(t, sdk)
 	}
-
-	// Create channel
-
-	// Org admin user is signing user for creating channel
-
-	createChannel(sdk, t, resMgmtClient)
-
-	//prepare context
-	adminContext := sdk.Context(fabsdk.WithUser(orgAdmin), fabsdk.WithOrg(orgName))
-
-	// Org resource management client
-	orgResMgmt, err := resmgmt.New(adminContext)
-	if err != nil {
-		t.Fatalf("Failed to create new resource management client: %s", err)
-	}
-
-	// Org peers join channel
-	if err = orgResMgmt.JoinChannel(channelID, resmgmt.WithRetry(retry.DefaultResMgmtOpts)); err != nil {
-		t.Fatalf("Org peers failed to JoinChannel: %s", err)
-	}
-
-	// Create chaincode package for example cc
-	createCC(t, orgResMgmt)
 
 	// ************ Test setup complete ************** //
 
@@ -124,6 +106,41 @@ func Run(t *testing.T, configOpt core.ConfigProvider, sdkOpts ...fabsdk.Option) 
 
 }
 
+func createChannelAndCC(t *testing.T, sdk *fabsdk.FabricSDK) {
+	//clientContext allows creation of transactions using the supplied identity as the credential.
+	clientContext := sdk.Context(fabsdk.WithUser(orgAdmin), fabsdk.WithOrg(ordererOrgName))
+
+	// Resource management client is responsible for managing channels (create/update channel)
+	// Supply user that has privileges to create channel (in this case orderer admin)
+	resMgmtClient, err := resmgmt.New(clientContext)
+	if err != nil {
+		t.Fatalf("Failed to create channel management client: %s", err)
+	}
+
+	// Create channel
+
+	// Org admin user is signing user for creating channel
+
+	createChannel(sdk, t, resMgmtClient)
+
+	//prepare context
+	adminContext := sdk.Context(fabsdk.WithUser(orgAdmin), fabsdk.WithOrg(orgName))
+
+	// Org resource management client
+	orgResMgmt, err := resmgmt.New(adminContext)
+	if err != nil {
+		t.Fatalf("Failed to create new resource management client: %s", err)
+	}
+
+	// Org peers join channel
+	if err = orgResMgmt.JoinChannel(channelID, resmgmt.WithRetry(retry.DefaultResMgmtOpts), resmgmt.WithOrdererURL("orderer.example.com")); err != nil {
+		t.Fatalf("Org peers failed to JoinChannel: %s", err)
+	}
+
+	// Create chaincode package for example cc
+	createCC(t, orgResMgmt)
+}
+
 func verifyFundsIsMoved(client *channel.Client, t *testing.T, value []byte) {
 	newValue := queryCC(client, t)
 	valueInt, err := strconv.Atoi(string(value))
@@ -141,7 +158,7 @@ func verifyFundsIsMoved(client *channel.Client, t *testing.T, value []byte) {
 
 func executeCC(client *channel.Client, t *testing.T) {
 	_, err := client.Execute(channel.Request{ChaincodeID: ccID, Fcn: "invoke", Args: integration.ExampleCCTxArgs()},
-		channel.WithRetry(retry.DefaultChClientOpts))
+		channel.WithRetry(retry.DefaultChannelOpts))
 	if err != nil {
 		t.Fatalf("Failed to move funds: %s", err)
 	}
@@ -149,7 +166,7 @@ func executeCC(client *channel.Client, t *testing.T) {
 
 func queryCC(client *channel.Client, t *testing.T) []byte {
 	response, err := client.Query(channel.Request{ChaincodeID: ccID, Fcn: "invoke", Args: integration.ExampleCCQueryArgs()},
-		channel.WithRetry(retry.DefaultChClientOpts))
+		channel.WithRetry(retry.DefaultChannelOpts))
 	if err != nil {
 		t.Fatalf("Failed to query funds: %s", err)
 	}
@@ -187,7 +204,7 @@ func createChannel(sdk *fabsdk.FabricSDK, t *testing.T, resMgmtClient *resmgmt.C
 	req := resmgmt.SaveChannelRequest{ChannelID: channelID,
 		ChannelConfigPath: path.Join("../../../", metadata.ChannelConfigPath, "mychannel.tx"),
 		SigningIdentities: []msp.SigningIdentity{adminIdentity}}
-	txID, err := resMgmtClient.SaveChannel(req, resmgmt.WithRetry(retry.DefaultResMgmtOpts))
+	txID, err := resMgmtClient.SaveChannel(req, resmgmt.WithRetry(retry.DefaultResMgmtOpts), resmgmt.WithOrdererURL("orderer.example.com"))
 	require.Nil(t, err, "error should be nil")
 	require.NotEmpty(t, txID, "transaction ID should be populated")
 }

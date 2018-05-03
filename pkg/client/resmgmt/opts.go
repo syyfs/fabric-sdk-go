@@ -81,17 +81,14 @@ func WithTimeout(timeoutType fab.TimeoutType, timeout time.Duration) RequestOpti
 }
 
 // WithOrdererURL allows an orderer to be specified for the request.
-// The orderer will be looked-up based on the url argument.
-// A default orderer implementation will be used.
-func WithOrdererURL(url string) RequestOption {
+// The orderer will be looked-up based on the name/url argument.
+func WithOrdererURL(nameOrURL string) RequestOption {
+
 	return func(ctx context.Client, opts *requestOptions) error {
 
-		ordererCfg, err := ctx.EndpointConfig().OrdererConfig(url)
+		ordererCfg, err := ctx.EndpointConfig().OrdererConfig(nameOrURL)
 		if err != nil {
-			return errors.WithMessage(err, "orderer not found")
-		}
-		if ordererCfg == nil {
-			return errors.New("orderer not found")
+			return errors.Wrapf(err, "orderer not found for url : %s", nameOrURL)
 		}
 
 		orderer, err := ctx.InfraProvider().CreateOrdererFromConfig(ordererCfg)
@@ -111,7 +108,7 @@ func WithOrderer(orderer fab.Orderer) RequestOption {
 	}
 }
 
-//WithParentContext encapsulates grpc context parent to Options
+//WithParentContext encapsulates grpc parent context.
 func WithParentContext(parentContext reqContext.Context) RequestOption {
 	return func(ctx context.Client, o *requestOptions) error {
 		o.ParentContext = parentContext
@@ -119,7 +116,7 @@ func WithParentContext(parentContext reqContext.Context) RequestOption {
 	}
 }
 
-// WithRetry sets retry options
+// WithRetry sets retry options.
 func WithRetry(retryOpt retry.Opts) RequestOption {
 	return func(ctx context.Client, o *requestOptions) error {
 		o.Retry = retryOpt

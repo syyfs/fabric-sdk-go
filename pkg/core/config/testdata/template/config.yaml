@@ -60,6 +60,10 @@ client:
 #    timeout:
 #      connection: 15s
 #      response: 15s
+#  discovery:
+#    timeout:
+#      connection: 15s
+#      response: 15s
 #  global:
 #    timeout:
 #      query: 180s
@@ -70,6 +74,7 @@ client:
 #      eventServiceIdle: 2m
 #      channelConfig: 30m
 #      channelMembership: 30s
+#      discovery: 10s
 
   # Needed to load users crypto keys and certs.
   cryptoconfig:
@@ -120,6 +125,7 @@ channels:
     # channel. This list can be a result of access control ("org1" can only access "ordererA"), or
     # operational decisions to share loads from applications among the orderers.  The values must
     # be "names" of orgs defined under "organizations/peers"
+    # deprecated: not recommended, to override any orderer configuration items, entity matchers should be used.
 #    orderers:
 #      - orderer.example.com
 

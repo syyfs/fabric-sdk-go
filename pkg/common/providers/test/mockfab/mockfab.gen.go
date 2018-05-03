@@ -167,29 +167,16 @@ func (mr *MockEndpointConfigMockRecorder) OrderersConfig() *gomock.Call {
 }
 
 // PeerConfig mocks base method
-func (m *MockEndpointConfig) PeerConfig(arg0, arg1 string) (*fab.PeerConfig, error) {
-	ret := m.ctrl.Call(m, "PeerConfig", arg0, arg1)
+func (m *MockEndpointConfig) PeerConfig(arg0 string) (*fab.PeerConfig, error) {
+	ret := m.ctrl.Call(m, "PeerConfig", arg0)
 	ret0, _ := ret[0].(*fab.PeerConfig)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // PeerConfig indicates an expected call of PeerConfig
-func (mr *MockEndpointConfigMockRecorder) PeerConfig(arg0, arg1 interface{}) *gomock.Call {
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PeerConfig", reflect.TypeOf((*MockEndpointConfig)(nil).PeerConfig), arg0, arg1)
-}
-
-// PeerConfigByURL mocks base method
-func (m *MockEndpointConfig) PeerConfigByURL(arg0 string) (*fab.PeerConfig, error) {
-	ret := m.ctrl.Call(m, "PeerConfigByURL", arg0)
-	ret0, _ := ret[0].(*fab.PeerConfig)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// PeerConfigByURL indicates an expected call of PeerConfigByURL
-func (mr *MockEndpointConfigMockRecorder) PeerConfigByURL(arg0 interface{}) *gomock.Call {
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PeerConfigByURL", reflect.TypeOf((*MockEndpointConfig)(nil).PeerConfigByURL), arg0)
+func (mr *MockEndpointConfigMockRecorder) PeerConfig(arg0 interface{}) *gomock.Call {
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PeerConfig", reflect.TypeOf((*MockEndpointConfig)(nil).PeerConfig), arg0)
 }
 
 // PeerMSPID mocks base method
@@ -365,6 +352,18 @@ func (m *MockProviders) InfraProvider() fab.InfraProvider {
 // InfraProvider indicates an expected call of InfraProvider
 func (mr *MockProvidersMockRecorder) InfraProvider() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InfraProvider", reflect.TypeOf((*MockProviders)(nil).InfraProvider))
+}
+
+// LocalDiscoveryProvider mocks base method
+func (m *MockProviders) LocalDiscoveryProvider() fab.LocalDiscoveryProvider {
+	ret := m.ctrl.Call(m, "LocalDiscoveryProvider")
+	ret0, _ := ret[0].(fab.LocalDiscoveryProvider)
+	return ret0
+}
+
+// LocalDiscoveryProvider indicates an expected call of LocalDiscoveryProvider
+func (mr *MockProvidersMockRecorder) LocalDiscoveryProvider() *gomock.Call {
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LocalDiscoveryProvider", reflect.TypeOf((*MockProviders)(nil).LocalDiscoveryProvider))
 }
 
 // SelectionProvider mocks base method

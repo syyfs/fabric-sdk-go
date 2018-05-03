@@ -8,6 +8,7 @@ package orgs
 
 import (
 	"math"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -115,7 +116,7 @@ func testWithOrg1(t *testing.T, sdk *fabsdk.FabricSDK) int {
 	}
 
 	// Org1 peers join channel
-	if err = org1ResMgmt.JoinChannel("orgchannel", resmgmt.WithRetry(retry.DefaultResMgmtOpts)); err != nil {
+	if err = org1ResMgmt.JoinChannel("orgchannel", resmgmt.WithRetry(retry.DefaultResMgmtOpts), resmgmt.WithOrdererURL("orderer.example.com")); err != nil {
 		t.Fatalf("Org1 peers failed to JoinChannel: %s", err)
 	}
 
@@ -126,7 +127,7 @@ func testWithOrg1(t *testing.T, sdk *fabsdk.FabricSDK) int {
 	}
 
 	// Org2 peers join channel
-	if err = org2ResMgmt.JoinChannel("orgchannel", resmgmt.WithRetry(retry.DefaultResMgmtOpts)); err != nil {
+	if err = org2ResMgmt.JoinChannel("orgchannel", resmgmt.WithRetry(retry.DefaultResMgmtOpts), resmgmt.WithOrdererURL("orderer.example.com")); err != nil {
 		t.Fatalf("Org2 peers failed to JoinChannel: %s", err)
 	}
 
@@ -161,7 +162,7 @@ func testWithOrg1(t *testing.T, sdk *fabsdk.FabricSDK) int {
 	// Assert that funds have changed value on org1 peer
 	verifyValue(t, chClientOrg1User, initial+1)
 
-	// Get latest block chain info
+	// Get latest blockchain info
 	checkLedgerInfo(ledgerClient, t, ledgerInfoBefore, transactionID)
 
 	// Start chaincode upgrade process (install and instantiate new version of exampleCC)
@@ -222,20 +223,20 @@ func createChannel(org1AdminUser msp.SigningIdentity, org2AdminUser msp.SigningI
 	req := resmgmt.SaveChannelRequest{ChannelID: "orgchannel",
 		ChannelConfigPath: path.Join("../../../", metadata.ChannelConfigPath, "orgchannel.tx"),
 		SigningIdentities: []msp.SigningIdentity{org1AdminUser, org2AdminUser}}
-	txID, err := chMgmtClient.SaveChannel(req, resmgmt.WithRetry(retry.DefaultResMgmtOpts))
+	txID, err := chMgmtClient.SaveChannel(req, resmgmt.WithRetry(retry.DefaultResMgmtOpts), resmgmt.WithOrdererURL("orderer.example.com"))
 	require.Nil(t, err, "error should be nil")
 	require.NotEmpty(t, txID, "transaction ID should be populated")
 }
 
 func testCCPolicy(chClientOrg2User *channel.Client, t *testing.T) {
 	_, err := chClientOrg2User.Execute(channel.Request{ChaincodeID: "exampleCC", Fcn: "invoke", Args: integration.ExampleCCTxArgs()}, channel.WithTargets(orgTestPeer1),
-		channel.WithRetry(retry.DefaultChClientOpts))
+		channel.WithRetry(retry.DefaultChannelOpts))
 	if err == nil {
 		t.Fatalf("Should have failed to move funds due to cc policy")
 	}
 	// Org2 user moves funds (cc policy ok since we have provided peers for both Orgs)
 	_, err = chClientOrg2User.Execute(channel.Request{ChaincodeID: "exampleCC", Fcn: "invoke", Args: integration.ExampleCCTxArgs()}, channel.WithTargets(orgTestPeer0, orgTestPeer1),
-		channel.WithRetry(retry.DefaultChClientOpts))
+		channel.WithRetry(retry.DefaultChannelOpts))
 	if err != nil {
 		t.Fatalf("Failed to move funds: %s", err)
 	}
@@ -266,7 +267,7 @@ func upgradeCC(ccPkg *api.CCPackage, org1ResMgmt *resmgmt.Client, t *testing.T, 
 
 func moveFunds(chClientOrgUser *channel.Client, t *testing.T) fab.TransactionID {
 	response, err := chClientOrgUser.Execute(channel.Request{ChaincodeID: "exampleCC", Fcn: "invoke", Args: integration.ExampleCCTxArgs()}, channel.WithTargets(orgTestPeer1),
-		channel.WithRetry(retry.DefaultChClientOpts))
+		channel.WithRetry(retry.DefaultChannelOpts))
 	if err != nil {
 		t.Fatalf("Failed to move funds: %s", err)
 	}
@@ -308,7 +309,7 @@ func getBlockchainInfo(ledgerClient *ledger.Client, t *testing.T) *fab.Blockchai
 
 func queryCC(chClientOrg1User *channel.Client, t *testing.T) []byte {
 	response, err := chClientOrg1User.Query(channel.Request{ChaincodeID: "exampleCC", Fcn: "invoke", Args: integration.ExampleCCQueryArgs()},
-		channel.WithRetry(retry.DefaultChClientOpts))
+		channel.WithRetry(retry.DefaultChannelOpts))
 	if err != nil {
 		t.Fatalf("Failed to query funds: %s", err)
 	}
@@ -322,17 +323,32 @@ func queryCC(chClientOrg1User *channel.Client, t *testing.T) []byte {
 }
 
 func verifyErrorFromCC(chClientOrg1User *channel.Client, t *testing.T) {
-	_, err := chClientOrg1User.Query(channel.Request{ChaincodeID: "exampleCC", Fcn: "DUMMY_FUNCTION", Args: integration.ExampleCCQueryArgs()},
-		channel.WithRetry(retry.DefaultChClientOpts))
+	r, err := chClientOrg1User.Query(channel.Request{ChaincodeID: "exampleCC", Fcn: "DUMMY_FUNCTION", Args: integration.ExampleCCQueryArgs()},
+		channel.WithRetry(retry.DefaultChannelOpts))
+	t.Logf("verifyErrorFromCC err: %s ***** responses: %v", err, r)
+
 	require.Error(t, err, "Should have failed with dummy function")
 	s, ok := status.FromError(err)
+	t.Logf("verifyErrorFromCC status.FromError s: %s, ok: %t", s, ok)
+
 	require.True(t, ok, "expected status error")
-	require.Equal(t, s.Code, int32(status.MultipleErrors))
-	for _, err := range err.(multi.Errors) {
+	// current DEVSTABLE Fabric version (v1.2) has a different error structure,
+	// below condition will work for DEV, PREV or PRERELEASE
+	// TODO remove the whole if condition when PREV becomes v1.2 and keep code in else condition
+	if os.Getenv("FABRIC_FIXTURE_VERSION") != "v1.2" {
+		require.Equal(t, s.Code, int32(status.MultipleErrors))
+
+		for _, err := range err.(multi.Errors) {
+			s, ok := status.FromError(err)
+			require.True(t, ok, "expected status error")
+			require.EqualValues(t, int32(500), s.Code)
+			require.Equal(t, status.ChaincodeStatus, s.Group)
+		}
+	} else {
+		// in v1.2, the error is not of type multi.Errors slice but rather 1 instance of errors.withMessage
 		s, ok := status.FromError(err)
 		require.True(t, ok, "expected status error")
 		require.EqualValues(t, int32(500), s.Code)
-		require.Equal(t, status.ChaincodeStatus, s.Group)
 	}
 }
 
@@ -396,7 +412,7 @@ func testWithOrg2(t *testing.T, expectedValue int) int {
 
 	// Org2 user moves funds (dynamic selection will inspect chaincode policy to determine endorsers)
 	_, err = chClientOrg2User.Execute(channel.Request{ChaincodeID: "exampleCC", Fcn: "invoke", Args: integration.ExampleCCTxArgs()},
-		channel.WithRetry(retry.DefaultChClientOpts))
+		channel.WithRetry(retry.DefaultChannelOpts))
 	if err != nil {
 		t.Fatalf("Failed to move funds: %s", err)
 	}
@@ -425,7 +441,7 @@ func verifyValue(t *testing.T, chClient *channel.Client, expected int) {
 	for i := 0; i < pollRetries; i++ {
 		// Query final value on org1 peer
 		response, err := chClient.Query(channel.Request{ChaincodeID: "exampleCC", Fcn: "invoke", Args: integration.ExampleCCQueryArgs()}, channel.WithTargets(orgTestPeer0),
-			channel.WithRetry(retry.DefaultChClientOpts))
+			channel.WithRetry(retry.DefaultChannelOpts))
 		if err != nil {
 			t.Fatalf("Failed to query funds after transaction: %s", err)
 		}

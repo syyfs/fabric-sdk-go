@@ -10,6 +10,7 @@ package filter
 import (
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/context"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
+	"github.com/hyperledger/fabric-sdk-go/pkg/fab/comm"
 )
 
 // EndpointType represents endpoint type
@@ -48,8 +49,8 @@ type EndpointFilter struct {
 // Accept returns false if this peer is to be excluded from the target list
 func (f *EndpointFilter) Accept(peer fab.Peer) bool {
 
-	peerConfig, err := f.ctx.EndpointConfig().PeerConfigByURL(peer.URL())
-	if err != nil || peerConfig == nil {
+	peerConfig, err := comm.SearchPeerConfigFromURL(f.ctx.EndpointConfig(), peer.URL())
+	if err != nil {
 		return true
 	}
 

@@ -19,6 +19,7 @@ import (
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/core"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/msp"
+	"github.com/hyperledger/fabric-sdk-go/pkg/core/config/lookup"
 	"github.com/hyperledger/fabric-sdk-go/pkg/core/cryptosuite"
 	fabImpl "github.com/hyperledger/fabric-sdk-go/pkg/fab"
 	sdkApi "github.com/hyperledger/fabric-sdk-go/pkg/fabsdk/api"
@@ -35,6 +36,12 @@ type FabricSDK struct {
 	provider *context.Provider
 }
 
+type configs struct {
+	cryptoSuiteConfig core.CryptoSuiteConfig
+	endpointConfig    fab.EndpointConfig
+	identityConfig    msp.IdentityConfig
+}
+
 type options struct {
 	Core              sdkApi.CoreProviderFactory
 	MSP               sdkApi.MSPProviderFactory
@@ -43,7 +50,7 @@ type options struct {
 	CryptoSuiteConfig core.CryptoSuiteConfig
 	endpointConfig    fab.EndpointConfig
 	IdentityConfig    msp.IdentityConfig
-	ConfigBackend     core.ConfigBackend
+	ConfigBackend     []core.ConfigBackend
 }
 
 // Option configures the SDK.
@@ -109,9 +116,17 @@ func WithConfigCryptoSuite(cryptoConfig core.CryptoSuiteConfig) Option {
 }
 
 // WithConfigEndpoint injects a EndpointConfig interface to the SDK
-func WithConfigEndpoint(endpointConfig fab.EndpointConfig) Option {
+// it accepts either a full interface of EndpointEconfig or a list
+// of sub interfaces each implementing one (or more) function(s) of EndpointConfig
+func WithConfigEndpoint(endpointConfigs ...interface{}) Option {
 	return func(opts *options) error {
-		opts.endpointConfig = endpointConfig
+		c, err := fabImpl.BuildConfigEndpointFromOptions(endpointConfigs...)
+		// since EndpointConfig is the seed to the sdk's initialization
+		// if building an instance from options fails, then return an error immediately
+		if err != nil {
+			return err
+		}
+		opts.endpointConfig = c
 		return nil
 	}
 }
@@ -176,14 +191,14 @@ func initSDK(sdk *FabricSDK, configProvider core.ConfigProvider, opts []Option) 
 	}
 	logging.Initialize(sdk.opts.Logger)
 
-	//Initialize config if not passed through options
-	err := sdk.loadConfig(configProvider)
+	//Initialize configs if not passed through options
+	cfg, err := sdk.loadConfigs(configProvider)
 	if err != nil {
 		return errors.WithMessage(err, "failed to initialize configuration")
 	}
 
 	// Initialize crypto provider
-	cryptoSuite, err := sdk.opts.Core.CreateCryptoSuiteProvider(sdk.opts.CryptoSuiteConfig)
+	cryptoSuite, err := sdk.opts.Core.CreateCryptoSuiteProvider(cfg.cryptoSuiteConfig)
 	if err != nil {
 		return errors.WithMessage(err, "failed to initialize crypto suite")
 	}
@@ -202,7 +217,7 @@ func initSDK(sdk *FabricSDK, configProvider core.ConfigProvider, opts []Option) 
 	}
 
 	// Initialize state store
-	userStore, err := sdk.opts.MSP.CreateUserStore(sdk.opts.IdentityConfig)
+	userStore, err := sdk.opts.MSP.CreateUserStore(cfg.identityConfig)
 	if err != nil {
 		return errors.WithMessage(err, "failed to create state store")
 	}
@@ -214,25 +229,31 @@ func initSDK(sdk *FabricSDK, configProvider core.ConfigProvider, opts []Option) 
 	}
 
 	// Initialize IdentityManagerProvider
-	identityManagerProvider, err := sdk.opts.MSP.CreateIdentityManagerProvider(sdk.opts.endpointConfig, cryptoSuite, userStore)
+	identityManagerProvider, err := sdk.opts.MSP.CreateIdentityManagerProvider(cfg.endpointConfig, cryptoSuite, userStore)
 	if err != nil {
 		return errors.WithMessage(err, "failed to create identity manager provider")
 	}
 
 	// Initialize Fabric provider
-	infraProvider, err := sdk.opts.Core.CreateInfraProvider(sdk.opts.endpointConfig)
+	infraProvider, err := sdk.opts.Core.CreateInfraProvider(cfg.endpointConfig)
 	if err != nil {
 		return errors.WithMessage(err, "failed to create infra provider")
 	}
 
 	// Initialize discovery provider
-	discoveryProvider, err := sdk.opts.Service.CreateDiscoveryProvider(sdk.opts.endpointConfig)
+	discoveryProvider, err := sdk.opts.Service.CreateDiscoveryProvider(cfg.endpointConfig)
 	if err != nil {
 		return errors.WithMessage(err, "failed to create discovery provider")
 	}
 
+	// Initialize local discovery provider
+	localDiscoveryProvider, err := sdk.opts.Service.CreateLocalDiscoveryProvider(cfg.endpointConfig)
+	if err != nil {
+		return errors.WithMessage(err, "failed to create local discovery provider")
+	}
+
 	// Initialize selection provider (for selecting endorsing peers)
-	selectionProvider, err := sdk.opts.Service.CreateSelectionProvider(sdk.opts.endpointConfig)
+	selectionProvider, err := sdk.opts.Service.CreateSelectionProvider(cfg.endpointConfig)
 	if err != nil {
 		return errors.WithMessage(err, "failed to create selection provider")
 	}
@@ -243,13 +264,14 @@ func initSDK(sdk *FabricSDK, configProvider core.ConfigProvider, opts []Option) 
 	}
 
 	//update sdk providers list since all required providers are initialized
-	sdk.provider = context.NewProvider(context.WithCryptoSuiteConfig(sdk.opts.CryptoSuiteConfig),
-		context.WithEndpointConfig(sdk.opts.endpointConfig),
-		context.WithIdentityConfig(sdk.opts.IdentityConfig),
+	sdk.provider = context.NewProvider(context.WithCryptoSuiteConfig(cfg.cryptoSuiteConfig),
+		context.WithEndpointConfig(cfg.endpointConfig),
+		context.WithIdentityConfig(cfg.identityConfig),
 		context.WithCryptoSuite(cryptoSuite),
 		context.WithSigningManager(signingManager),
 		context.WithUserStore(userStore),
 		context.WithDiscoveryProvider(discoveryProvider),
+		context.WithLocalDiscoveryProvider(localDiscoveryProvider),
 		context.WithSelectionProvider(selectionProvider),
 		context.WithIdentityManagerProvider(identityManagerProvider),
 		context.WithInfraProvider(infraProvider),
@@ -270,6 +292,13 @@ func initSDK(sdk *FabricSDK, configProvider core.ConfigProvider, opts []Option) 
 		}
 	}
 
+	if pi, ok := localDiscoveryProvider.(providerInit); ok {
+		err = pi.Initialize(sdk.provider)
+		if err != nil {
+			return errors.WithMessage(err, "failed to initialize local discovery provider")
+		}
+	}
+
 	if pi, ok := selectionProvider.(providerInit); ok {
 		err = pi.Initialize(sdk.provider)
 		if err != nil {
@@ -285,6 +314,9 @@ func (sdk *FabricSDK) Close() {
 	if pvdr, ok := sdk.provider.DiscoveryProvider().(closeable); ok {
 		pvdr.Close()
 	}
+	if pvdr, ok := sdk.provider.LocalDiscoveryProvider().(closeable); ok {
+		pvdr.Close()
+	}
 	if pvdr, ok := sdk.provider.SelectionProvider().(closeable); ok {
 		pvdr.Close()
 	}
@@ -296,7 +328,7 @@ func (sdk *FabricSDK) Config() (core.ConfigBackend, error) {
 	if sdk.opts.ConfigBackend == nil {
 		return nil, errors.New("unable to find config backend")
 	}
-	return sdk.opts.ConfigBackend, nil
+	return lookup.New(sdk.opts.ConfigBackend...), nil
 }
 
 //Context creates and returns context client which has all the necessary providers
@@ -327,34 +359,65 @@ func (sdk *FabricSDK) ChannelContext(channelID string, options ...ContextOption)
 	return channelProvider
 }
 
-//loadConfig load config from config backend when configs are not provided through opts
-func (sdk *FabricSDK) loadConfig(configProvider core.ConfigProvider) error {
-	if sdk.opts.CryptoSuiteConfig == nil || sdk.opts.endpointConfig == nil || sdk.opts.IdentityConfig == nil {
+//loadConfigs load config from config backend when configs are not provided through opts
+func (sdk *FabricSDK) loadConfigs(configProvider core.ConfigProvider) (*configs, error) {
+	c := &configs{
+		identityConfig:    sdk.opts.IdentityConfig,
+		endpointConfig:    sdk.opts.endpointConfig,
+		cryptoSuiteConfig: sdk.opts.CryptoSuiteConfig,
+	}
+
+	if c.cryptoSuiteConfig == nil || c.endpointConfig == nil || c.identityConfig == nil {
 		configBackend, err := configProvider()
 		if err != nil {
-			return errors.WithMessage(err, "unable to load config backend")
+			return nil, errors.WithMessage(err, "unable to load config backend")
 		}
 
-		//configs passed through opts takes priority
-		if sdk.opts.CryptoSuiteConfig == nil {
-			sdk.opts.CryptoSuiteConfig = cryptosuite.ConfigFromBackend(configBackend)
+		//configs passed through opts take priority over default ones
+		if c.cryptoSuiteConfig == nil {
+			c.cryptoSuiteConfig = cryptosuite.ConfigFromBackend(configBackend...)
 		}
 
-		if sdk.opts.endpointConfig == nil {
-			sdk.opts.endpointConfig, err = fabImpl.ConfigFromBackend(configBackend)
+		c.endpointConfig, err = sdk.loadEndpointConfig(configBackend...)
+		if err != nil {
+			return nil, errors.WithMessage(err, "unable to load endpoint config")
+		}
+
+		if c.identityConfig == nil {
+			c.identityConfig, err = mspImpl.ConfigFromBackend(configBackend...)
 			if err != nil {
-				return errors.WithMessage(err, "failed to initialize endpoint config from config backend")
-			}
-		}
-
-		if sdk.opts.IdentityConfig == nil {
-			sdk.opts.IdentityConfig, err = mspImpl.ConfigFromBackend(configBackend)
-			if err != nil {
-				return errors.WithMessage(err, "failed to initialize identity config from config backend")
+				return nil, errors.WithMessage(err, "failed to initialize identity config from config backend")
 			}
 		}
 
 		sdk.opts.ConfigBackend = configBackend
 	}
-	return nil
+
+	return c, nil
+}
+
+//loadEndpointConfig loads config from config backend when configs are not provided through opts or override missing interfaces from opts with config backend
+func (sdk *FabricSDK) loadEndpointConfig(configBackend ...core.ConfigBackend) (fab.EndpointConfig, error) {
+	endpointConfigOpt, ok := sdk.opts.endpointConfig.(*fabImpl.EndpointConfigOptions)
+
+	// if optional endpoint was nil or not all of its sub interface functions were overridden,
+	// then get default endpoint config and override the functions that were not overridden by opts
+	if sdk.opts.endpointConfig == nil || (ok && !fabImpl.IsEndpointConfigFullyOverridden(endpointConfigOpt)) {
+		defEndpointConfig, err := fabImpl.ConfigFromBackend(configBackend...)
+		if err != nil {
+			return nil, errors.WithMessage(err, "failed to initialize endpoint config from config backend")
+		}
+
+		// if opts.endpointConfig was not provided during WithEndpointConfig(opts...) call, then return default endpointConfig
+		if sdk.opts.endpointConfig == nil {
+			return defEndpointConfig, nil
+		}
+		// else fill any empty interface from opts with defEndpointConfig interface (set default function for ones not provided by WithEndpointConfig() call) and return
+		return fabImpl.UpdateMissingOptsWithDefaultConfig(endpointConfigOpt, defEndpointConfig), nil
+	}
+	// if optional endpoint config was completely overridden but !ok, then return an error
+	if !ok {
+		return nil, errors.New("failed to retrieve config endpoint from opts")
+	}
+	return endpointConfigOpt, nil
 }

@@ -62,21 +62,6 @@ func TestEndpoint(t *testing.T) {
 	if endpoint.EventURL() != expectedEventURL {
 		t.Fatalf("expecting eventURL %s but got %s", expectedEventURL, endpoint.EventURL())
 	}
-	if endpoint.AllowInsecure != expectedAllowInsecure {
-		t.Fatalf("expecting allowInsecure %t but got %t", expectedAllowInsecure, endpoint.AllowInsecure)
-	}
-	if endpoint.FailFast != expectedFailfast {
-		t.Fatalf("expecting failFast %t but got %t", expectedFailfast, endpoint.FailFast)
-	}
-	if endpoint.KeepAliveParams.Time != expectedKeepAliveTime {
-		t.Fatalf("expecting keepAliveParams.Time %s but got %s", expectedKeepAliveTime, endpoint.KeepAliveParams.Time)
-	}
-	if endpoint.KeepAliveParams.Timeout != expectedKeepAliveTimeout {
-		t.Fatalf("expecting keepAliveParams.Timeout %s but got %s", expectedKeepAliveTimeout, endpoint.KeepAliveParams.Timeout)
-	}
-	if endpoint.KeepAliveParams.PermitWithoutStream != expectedKeepAlivePermit {
-		t.Fatalf("expecting keepAliveParams.PermitWithoutStream %t but got %t", expectedKeepAlivePermit, endpoint.KeepAliveParams.PermitWithoutStream)
-	}
 
 	opts := endpoint.Opts()
 	if len(opts) != expectedNumOpts {
@@ -176,7 +161,7 @@ func (c *mockConfig) ChannelPeers(name string) ([]fab.ChannelPeer, error) {
 }
 
 func newMockContext() *fabmocks.MockContext {
-	discoveryProvider, _ := fabmocks.NewMockDiscoveryProvider(nil, peers)
+	discoveryProvider := fabmocks.NewMockDiscoveryProvider(nil, peers)
 
 	ctx := fabmocks.NewMockContextWithCustomDiscovery(
 		mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),

@@ -81,7 +81,7 @@ func TestNewDefaultTwoValidSDK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get configbackend for test: %v", err)
 	}
-	configProvider := func() (core.ConfigBackend, error) {
+	configProvider := func() ([]core.ConfigBackend, error) {
 		return customBackend, nil
 	}
 
@@ -147,7 +147,7 @@ func checkClientOrg(configBackend core.ConfigBackend, t *testing.T, orgName stri
 	}
 }
 
-func getCustomBackend() (*mockCore.MockConfigBackend, error) {
+func getCustomBackend() ([]core.ConfigBackend, error) {
 	backend, err := config.FromFile(sdkConfigFile)()
 	if err != nil {
 		return nil, err
@@ -155,7 +155,7 @@ func getCustomBackend() (*mockCore.MockConfigBackend, error) {
 
 	//read existing client config from config
 	clientConfig := &mspImpl.ClientConfig{}
-	configLookup := lookup.New(backend)
+	configLookup := lookup.New(backend...)
 	err = configLookup.UnmarshalKey("client", clientConfig)
 	if err != nil {
 		return nil, err
@@ -167,5 +167,6 @@ func getCustomBackend() (*mockCore.MockConfigBackend, error) {
 	backendMap := make(map[string]interface{})
 	backendMap["client"] = clientConfig
 
-	return &mockCore.MockConfigBackend{KeyValueMap: backendMap, CustomBackend: backend}, nil
+	backends := append([]core.ConfigBackend{}, &mockCore.MockConfigBackend{KeyValueMap: backendMap})
+	return append(backends, backend...), nil
 }

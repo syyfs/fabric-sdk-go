@@ -272,7 +272,22 @@ peers:
       ssl-target-name-override: peer0.org2.example.com
       allow-insecure: false
     tlsCACerts:
-      pem:
+      # pem supersedes path
+      pem: |
+        -----BEGIN CERTIFICATE-----
+        MIICNjCCAdygAwIBAgIRAILSPmMB3BzoLIQGsFxwZr8wCgYIKoZIzj0EAwIwbDEL
+        MAkGA1UEBhMCVVMxEzARBgNVBAgTCkNhbGlmb3JuaWExFjAUBgNVBAcTDVNhbiBG
+        cmFuY2lzY28xFDASBgNVBAoTC2V4YW1wbGUuY29tMRowGAYDVQQDExF0bHNjYS5l
+        eGFtcGxlLmNvbTAeFw0xNzA3MjgxNDI3MjBaFw0yNzA3MjYxNDI3MjBaMGwxCzAJ
+        BgNVBAYTAlVTMRMwEQYDVQQIEwpDYWxpZm9ybmlhMRYwFAYDVQQHEw1TYW4gRnJh
+        bmNpc2NvMRQwEgYDVQQKEwtleGFtcGxlLmNvbTEaMBgGA1UEAxMRdGxzY2EuZXhh
+        bXBsZS5jb20wWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQfgKb4db53odNzdMXn
+        P5FZTZTFztOO1yLvCHDofSNfTPq/guw+YYk7ZNmhlhj8JHFG6dTybc9Qb/HOh9hh
+        gYpXo18wXTAOBgNVHQ8BAf8EBAMCAaYwDwYDVR0lBAgwBgYEVR0lADAPBgNVHRMB
+        Af8EBTADAQH/MCkGA1UdDgQiBCBxaEP3nVHQx4r7tC+WO//vrPRM1t86SKN0s6XB
+        8LWbHTAKBggqhkjOPQQDAgNIADBFAiEA96HXwCsuMr7tti8lpcv1oVnXg0FlTxR/
+        SQtE5YgdxkUCIHReNWh/pluHTxeGu2jNCH1eh6o2ajSGeeizoapvdJbN
+        -----END CERTIFICATE-----
       path:
       #path: ${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}/peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem
 
@@ -367,65 +382,3 @@ certificateAuthorities:
       enrollSecret: adminpw
     # [Optional] The optional name of the CA.
     caName: ca.org2.example.com
-
-# EntityMatchers enable substitution of network hostnames with static configurations
- # so that properties can be mapped. Regex can be used for this purpose
-# UrlSubstitutionExp can be empty which means the same network hostname will be used
-# UrlSubstitutionExp can be given same as mapped peer url, so that mapped peer url can be used
-# UrlSubstitutionExp can have golang regex matchers like $1.local.example.$2:$3 for pattern
- # like peer0.org1.example.com:1234 which converts peer0.org1.example.com to peer0.org1.local.example.com:1234
-# EventUrlSubstitutionExp and sslTargetOverrideUrlSubstitutionExp follow in the same lines as
- # SubstitutionExp for the fields eventUrl and gprcOptions.ssl-target-name-override respectively
-# In any case mappedHost's config will be used, so mapped host cannot be empty, if entityMatchers are used
-entityMatchers:
-  peer:
-    - pattern: (\w+).example.(\w+)
-      urlSubstitutionExp: localhost:7051
-      eventUrlSubstitutionExp: localhost:7053
-      sslTargetOverrideUrlSubstitutionExp: localhost
-      mappedHost: peer0.org1.example.com
-
-    - pattern: (\w+).example2.(\w+):(\d+)
-      urlSubstitutionExp: localhost:7051
-      eventUrlSubstitutionExp: localhost:7053
-      sslTargetOverrideUrlSubstitutionExp: localhost
-      mappedHost: peer0.org2.example.com
-
-    - pattern: (\w+).example3.(\w+)
-      urlSubstitutionExp:
-      eventUrlSubstitutionExp:
-      sslTargetOverrideUrlSubstitutionExp:
-      mappedHost: peer0.org1.example.com
-
-    - pattern: (\w+).example4.(\w+):(\d+)
-      urlSubstitutionExp: $1.org1.example.$2:$3
-      eventUrlSubstitutionExp: $1.org1.example.$2:7053
-      sslTargetOverrideUrlSubstitutionExp: $1.org1.example.$2
-      mappedHost: peer0.org1.example.com
-
-    - pattern: (\w+).example2.com:(\d+)
-      urlSubstitutionExp: peer0.org2.example.com:7051
-      eventUrlSubstitutionExp:
-      sslTargetOverrideUrlSubstitutionExp:
-      mappedHost: peer0.org2.example.com
-
-  orderer:
-    - pattern: (\w+).example2.(\w+)
-      urlSubstitutionExp: localhost:7050
-      sslTargetOverrideUrlSubstitutionExp: localhost
-      mappedHost: orderer.example.com
-
-    - pattern: (\w+).example.(\w+)
-      urlSubstitutionExp: localhost:7050
-      sslTargetOverrideUrlSubstitutionExp: localhost
-      mappedHost: orderer.example.com
-
-    - pattern: (\w+).example3.(\w+)
-      urlSubstitutionExp:
-      sslTargetOverrideUrlSubstitutionExp:
-      mappedHost: orderer.example.com
-
-    - pattern: (\w+).example4.(\w+):(\d+)
-      urlSubstitutionExp: $1.example.$2:$3
-      sslTargetOverrideUrlSubstitutionExp: $1.example.$2
-      mappedHost: orderer.example.com

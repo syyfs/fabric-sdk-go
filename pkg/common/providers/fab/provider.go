@@ -21,8 +21,6 @@ import (
 )
 
 // ClientContext contains the client context
-// TODO: This is a duplicate of context.Client since importing context.Client causes
-// a circular import error. This problem should be addressed in a future patch.
 type ClientContext interface {
 	core.Providers
 	msp.Providers
@@ -67,6 +65,11 @@ type DiscoveryService interface {
 	GetPeers() ([]Peer, error)
 }
 
+// LocalDiscoveryProvider is used to discover peers in the local MSP
+type LocalDiscoveryProvider interface {
+	CreateLocalDiscoveryService() (DiscoveryService, error)
+}
+
 // TargetFilter allows for filtering target peers
 type TargetFilter interface {
 	// Accept returns true if peer should be included in the list of target peers
@@ -85,10 +88,9 @@ type EndpointConfig interface {
 	MSPID(org string) (string, error)
 	PeerMSPID(name string) (string, error)
 	OrderersConfig() ([]OrdererConfig, error)
-	OrdererConfig(name string) (*OrdererConfig, error)
+	OrdererConfig(nameOrURL string) (*OrdererConfig, error)
 	PeersConfig(org string) ([]PeerConfig, error)
-	PeerConfig(org string, name string) (*PeerConfig, error)
-	PeerConfigByURL(url string) (*PeerConfig, error)
+	PeerConfig(nameOrURL string) (*PeerConfig, error)
 	NetworkConfig() (*NetworkConfig, error)
 	NetworkPeers() ([]NetworkPeer, error)
 	ChannelConfig(name string) (*ChannelNetworkConfig, error)
@@ -134,6 +136,12 @@ const (
 	ChannelConfigRefresh
 	// ChannelMembershipRefresh channel membership refresh interval
 	ChannelMembershipRefresh
+	// DiscoveryConnection discovery connection timeout
+	DiscoveryConnection
+	// DiscoveryResponse discovery response timeout
+	DiscoveryResponse
+	// DiscoveryServiceRefresh discovery service refresh interval
+	DiscoveryServiceRefresh
 )
 
 // EventServiceType specifies the type of event service to use
@@ -149,6 +157,7 @@ const (
 // Providers represents the SDK configured service providers context.
 type Providers interface {
 	DiscoveryProvider() DiscoveryProvider
+	LocalDiscoveryProvider() LocalDiscoveryProvider
 	SelectionProvider() SelectionProvider
 	ChannelProvider() ChannelProvider
 	InfraProvider() InfraProvider

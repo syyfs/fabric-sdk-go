@@ -8,6 +8,7 @@ package endpoint
 
 import (
 	"github.com/hyperledger/fabric-sdk-go/pkg/client/common/discovery"
+	"github.com/hyperledger/fabric-sdk-go/pkg/common/errors/status"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/logging"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/context"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
@@ -89,15 +90,25 @@ func (s *discoveryService) GetPeers() ([]fab.Peer, error) {
 	}
 
 	for _, peer := range peers {
-		peerConfig, err := s.ctx.EndpointConfig().PeerConfigByURL(peer.URL())
-		if err != nil {
-			return nil, errors.Wrapf(err, "unable to get peer config from [%s]", peer.URL())
-		}
-		if peerConfig == nil {
-			return nil, errors.Errorf("unable to get peer config from [%s]", peer.URL())
-		}
 
-		chPeer := s.getChannelPeer(peerConfig)
+		var peerConfig *fab.PeerConfig
+		var err error
+
+		chPeer := s.getChannelPeer(peer.URL())
+		if chPeer != nil {
+			peerConfig = &chPeer.PeerConfig
+		} else {
+			peerConfig, err = s.ctx.EndpointConfig().PeerConfig(peer.URL())
+			if err != nil {
+				errStatus, ok := status.FromError(err)
+				if ok && errStatus.Code == status.NoMatchingPeerEntity.ToInt32() {
+					logger.Debugf("no peer found for URL :%s", peer.URL())
+					continue
+				}
+				return nil, errors.Wrapf(err, "unable to get peer config from [%s]", peer.URL())
+			}
+			chPeer = s.getChannelPeer(peerConfig.URL)
+		}
 
 		logger.Debugf("Channel peer config for [%s]: %#v", peer.URL(), chPeer)
 
@@ -116,9 +127,9 @@ func (s *discoveryService) GetPeers() ([]fab.Peer, error) {
 	return eventEndpoints, nil
 }
 
-func (s *discoveryService) getChannelPeer(peerConfig *fab.PeerConfig) *fab.ChannelPeer {
+func (s *discoveryService) getChannelPeer(url string) *fab.ChannelPeer {
 	for _, chpeer := range s.chPeers {
-		if chpeer.URL == peerConfig.URL {
+		if chpeer.URL == url {
 			return &chpeer
 		}
 	}

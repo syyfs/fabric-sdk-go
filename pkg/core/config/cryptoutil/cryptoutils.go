@@ -18,6 +18,7 @@ import (
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/logging"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/core"
 	"github.com/pkg/errors"
+	fabricCaUtil "github.com/hyperledger/fabric-sdk-go/internal/github.com/hyperledger/fabric-ca/util"
 
 	factory "github.com/hyperledger/fabric-sdk-go/internal/github.com/hyperledger/fabric-ca/sdkpatch/cryptosuitebridge"
 )
@@ -70,6 +71,15 @@ func GetPublicKeyFromCert(cert []byte, cs core.CryptoSuite) (core.Key, error) {
 	}
 
 	return key, nil
+}
+
+func GetBCCSPKeyFromPEMBytes (keyBuff []byte, myCSP core.CryptoSuite, temporary bool) (core.Key, error) {
+	privateKey, err := fabricCaUtil.ImportBCCSPKeyFromPEMBytes(keyBuff, myCSP, true)
+	if err != nil {
+		return nil, errors.WithMessage(err, "failed to import key")
+	}
+	return privateKey, err
+
 }
 
 // X509KeyPair will return cer/key pair used for mutual TLS

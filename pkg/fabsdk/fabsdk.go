@@ -173,6 +173,17 @@ func WithServicePkg(service sdkApi.ServiceProviderFactory) Option {
 	}
 }
 
+func WithEndpointConfig(endpointConfigs ...interface{}) Option {
+	return func(opts *options) error {
+		c, err := fabImpl.BuildConfigEndpointFromOptions(endpointConfigs...)
+		if err != nil {
+			return err
+		}
+		opts.endpointConfig = c
+		return nil
+	}
+}
+
 // WithLoggerPkg injects the logger implementation into the SDK.
 func WithLoggerPkg(logger api.LoggerProvider) Option {
 	return func(opts *options) error {

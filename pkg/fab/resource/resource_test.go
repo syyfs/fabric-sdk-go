@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"fmt"
 	"io/ioutil"
-	"net"
 	"path"
 	"testing"
 	"time"
@@ -23,14 +22,13 @@ import (
 	contextImpl "github.com/hyperledger/fabric-sdk-go/pkg/context"
 	"github.com/hyperledger/fabric-sdk-go/pkg/fab/mocks"
 	"github.com/hyperledger/fabric-sdk-go/pkg/fab/peer"
-	"github.com/hyperledger/fabric-sdk-go/pkg/fab/resource/api"
 	mspmocks "github.com/hyperledger/fabric-sdk-go/pkg/msp/test/mockmsp"
 	"github.com/hyperledger/fabric-sdk-go/test/metadata"
 	"github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/common"
-	pb "github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/peer"
 	"github.com/pkg/errors"
-	"google.golang.org/grpc"
 )
+
+const testAddress = "127.0.0.1:0"
 
 func TestSignChannelConfig(t *testing.T) {
 	ctx := setupContext()
@@ -42,12 +40,12 @@ func TestSignChannelConfig(t *testing.T) {
 
 	_, err = SignChannelConfig(ctx, nil, nil)
 	if err == nil {
-		t.Fatalf("Expected 'channel configuration required")
+		t.Fatal("Expected 'channel configuration required")
 	}
 
 	_, err = SignChannelConfig(ctx, configTx, nil)
 	if err != nil {
-		t.Fatalf("Expected 'channel configuration required %v", err)
+		t.Fatalf("Expected 'channel configuration required %s", err)
 	}
 }
 
@@ -66,57 +64,57 @@ func TestCreateChannel(t *testing.T) {
 	// Create channel without envelope
 	reqCtx, cancel := contextImpl.NewRequest(ctx, contextImpl.WithTimeout(10*time.Second))
 	defer cancel()
-	_, err = CreateChannel(reqCtx, api.CreateChannelRequest{
+	_, err = CreateChannel(reqCtx, CreateChannelRequest{
 		Orderer: orderer,
 		Name:    "mychannel",
 	})
 	if err == nil {
-		t.Fatalf("Expected error creating channel without envelope")
+		t.Fatal("Expected error creating channel without envelope")
 	}
 
 	// Create channel without orderer
-	_, err = CreateChannel(reqCtx, api.CreateChannelRequest{
+	_, err = CreateChannel(reqCtx, CreateChannelRequest{
 		Envelope: configTx,
 		Name:     "mychannel",
 	})
 	if err == nil {
-		t.Fatalf("Expected error creating channel without orderer")
+		t.Fatal("Expected error creating channel without orderer")
 	}
 
 	// Create channel without name
-	_, err = CreateChannel(reqCtx, api.CreateChannelRequest{
+	_, err = CreateChannel(reqCtx, CreateChannelRequest{
 		Envelope: configTx,
 		Orderer:  orderer,
 	})
 	if err == nil {
-		t.Fatalf("Expected error creating channel without name")
+		t.Fatal("Expected error creating channel without name")
 	}
 
 	// Test with valid cofiguration
-	request := api.CreateChannelRequest{
+	request := CreateChannelRequest{
 		Envelope: configTx,
 		Orderer:  orderer,
 		Name:     "mychannel",
 	}
 	_, err = CreateChannel(reqCtx, request)
 	if err != nil {
-		t.Fatalf("Did not expect error from create channel. Got error: %v", err)
+		t.Fatalf("Did not expect error from create channel. Got error: %s", err)
 	}
 	select {
 	case b := <-verifyBroadcast:
 		logger.Debugf("Verified broadcast: %v", b)
 	case <-time.After(time.Second):
-		t.Fatalf("Expected broadcast")
+		t.Fatal("Expected broadcast")
 	}
 }
 
 func TestJoinChannel(t *testing.T) {
 	var peers []fab.ProposalProcessor
 
-	grpcServer := grpc.NewServer()
-	defer grpcServer.Stop()
+	srv := mocks.MockEndorserServer{}
+	addr := srv.Start(testAddress)
+	defer srv.Stop()
 
-	endorserServer, addr := startEndorserServer(t, grpcServer)
 	peer, _ := peer.New(mocks.NewMockEndpointConfig(), peer.WithURL("grpc://"+addr), peer.WithInsecure())
 	peers = append(peers, peer)
 
@@ -124,16 +122,16 @@ func TestJoinChannel(t *testing.T) {
 
 	genesisBlock := mocks.NewSimpleMockBlock()
 
-	request := api.JoinChannelRequest{}
+	request := JoinChannelRequest{}
 	reqCtx, cancel := contextImpl.NewRequest(ctx, contextImpl.WithTimeout(10*time.Second))
 	defer cancel()
 	err := JoinChannel(reqCtx, request, peers)
 	if err == nil {
-		t.Fatalf("Should not have been able to join channel because of missing GenesisBlock parameter")
+		t.Fatal("Should not have been able to join channel because of missing GenesisBlock parameter")
 	}
 
 	// Test join channel with valid arguments
-	request = api.JoinChannelRequest{
+	request = JoinChannelRequest{
 		GenesisBlock: genesisBlock,
 	}
 	err = JoinChannel(reqCtx, request, peers)
@@ -142,11 +140,11 @@ func TestJoinChannel(t *testing.T) {
 	}
 
 	// Test failed proposal error handling
-	endorserServer.ProposalError = errors.New("Test Error")
-	request = api.JoinChannelRequest{}
+	srv.ProposalError = errors.New("Test Error")
+	request = JoinChannelRequest{}
 	err = JoinChannel(reqCtx, request, peers)
 	if err == nil {
-		t.Fatalf("Expected error")
+		t.Fatal("Expected error")
 	}
 }
 
@@ -191,7 +189,7 @@ func TestQueryByChaincodeBadStatus(t *testing.T) {
 	defer cancel()
 	_, err := queryChaincodeWithTarget(reqCtx, request, &peer, options{})
 	if err == nil {
-		t.Fatalf("expected failure due to bad status")
+		t.Fatal("expected failure due to bad status")
 	}
 }
 
@@ -209,7 +207,7 @@ func TestQueryByChaincodeError(t *testing.T) {
 	defer cancel()
 	_, err := queryChaincodeWithTarget(reqCtx, request, &peer, options{})
 	if err == nil {
-		t.Fatalf("expected failure due to error")
+		t.Fatal("expected failure due to error")
 	}
 }
 
@@ -218,8 +216,9 @@ func TestGenesisBlockOrdererErr(t *testing.T) {
 	ctx := setupContext()
 
 	orderer := mocks.NewMockOrderer("", nil)
-	defer orderer.Close()
 	orderer.EnqueueForSendDeliver(mocks.NewSimpleMockError())
+	orderer.CloseQueue()
+
 	reqCtx, cancel := contextImpl.NewRequest(ctx, contextImpl.WithTimeout(10*time.Second))
 	defer cancel()
 	_, err := GenesisBlockFromOrderer(reqCtx, channelName, orderer)
@@ -234,9 +233,9 @@ func TestGenesisBlock(t *testing.T) {
 	ctx := setupContext()
 
 	orderer := mocks.NewMockOrderer("", nil)
-	defer orderer.Close()
 	orderer.EnqueueForSendDeliver(mocks.NewSimpleMockBlock())
 	orderer.EnqueueForSendDeliver(common.Status_SUCCESS)
+	orderer.CloseQueue()
 	reqCtx, cancel := contextImpl.NewRequest(ctx, contextImpl.WithTimeout(10*time.Second))
 	defer cancel()
 	_, err := GenesisBlockFromOrderer(reqCtx, channelName, orderer)
@@ -251,10 +250,11 @@ func TestGenesisBlockWithRetry(t *testing.T) {
 	ctx := setupContext()
 
 	orderer := mocks.NewMockOrderer("", nil)
-	defer orderer.Close()
 	orderer.EnqueueForSendDeliver(status.New(status.OrdererServerStatus, int32(common.Status_SERVICE_UNAVAILABLE), "service unavailable", []interface{}{}))
 	orderer.EnqueueForSendDeliver(mocks.NewSimpleMockBlock())
 	orderer.EnqueueForSendDeliver(common.Status_SUCCESS)
+	orderer.CloseQueue()
+
 	reqCtx, cancel := contextImpl.NewRequest(ctx, contextImpl.WithTimeout(10*time.Second))
 	defer cancel()
 	block, err := GenesisBlockFromOrderer(reqCtx, channelName, orderer, WithRetry(retry.DefaultResMgmtOpts))
@@ -262,7 +262,7 @@ func TestGenesisBlockWithRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenesisBlock failed: %s", err)
 	}
-	fmt.Printf("Block: %#v\n", block)
+	t.Logf("Block [%#v]", block)
 }
 
 /*
@@ -286,8 +286,8 @@ func TestGenesisBlockOrderer(t *testing.T) {
 	ctx := setupContext()
 
 	orderer := mocks.NewMockOrderer("", nil)
-	defer orderer.Close()
 	orderer.EnqueueForSendDeliver(mocks.NewSimpleMockError())
+	orderer.CloseQueue()
 
 	//Call get Genesis block
 	reqCtx, cancel := contextImpl.NewRequest(ctx, contextImpl.WithTimeout(10*time.Second))
@@ -298,21 +298,4 @@ func TestGenesisBlockOrderer(t *testing.T) {
 	if err == nil {
 		t.Fatal("GenesisBlock Test supposed to fail with error")
 	}
-}
-
-const testAddress = "127.0.0.1:0"
-
-func startEndorserServer(t *testing.T, grpcServer *grpc.Server) (*mocks.MockEndorserServer, string) {
-	lis, err := net.Listen("tcp", testAddress)
-	addr := lis.Addr().String()
-
-	endorserServer := &mocks.MockEndorserServer{}
-	pb.RegisterEndorserServer(grpcServer, endorserServer)
-	if err != nil {
-		t.Logf("Error starting test server %s", err)
-		t.FailNow()
-	}
-	t.Logf("Starting test server on %s\n", addr)
-	go grpcServer.Serve(lis)
-	return endorserServer, addr
 }

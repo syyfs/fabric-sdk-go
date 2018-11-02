@@ -8,6 +8,8 @@ package dynamicdiscovery
 
 import (
 	discclient "github.com/hyperledger/fabric-sdk-go/internal/github.com/hyperledger/fabric/discovery/client"
+	"github.com/hyperledger/fabric-sdk-go/pkg/client/common/random"
+	coptions "github.com/hyperledger/fabric-sdk-go/pkg/common/options"
 	contextAPI "github.com/hyperledger/fabric-sdk-go/pkg/common/providers/context"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
 	reqContext "github.com/hyperledger/fabric-sdk-go/pkg/context"
@@ -15,51 +17,54 @@ import (
 	"github.com/pkg/errors"
 )
 
-// channelService implements a dynamic Discovery Service that queries
+// ChannelService implements a dynamic Discovery Service that queries
 // Fabric's Discovery service for information about the peers that
 // are currently joined to the given channel.
-type channelService struct {
+type ChannelService struct {
 	*service
+	channelID  string
+	membership fab.ChannelMembership
 }
 
-// newChannelService creates a Discovery Service to query the list of member peers on a given channel.
-func newChannelService(options options) *channelService {
-	logger.Debugf("Creating new dynamic discovery service with cache refresh interval %s", options.refreshInterval)
-
-	s := &channelService{}
-	s.service = newService(s.queryPeers, options)
-	return s
-}
-
-// Initialize initializes the service with channel context
-func (s *channelService) Initialize(ctx contextAPI.Channel) error {
-	return s.service.Initialize(ctx)
-}
-
-func (s *channelService) channelContext() contextAPI.Channel {
-	return s.context().(contextAPI.Channel)
-}
-
-func (s *channelService) queryPeers() ([]fab.Peer, error) {
-	logger.Debugf("Refreshing peers of channel [%s] from discovery service...", s.channelContext().ChannelID())
-
-	channelContext := s.channelContext()
-	if channelContext == nil {
-		return nil, errors.Errorf("the service has not been initialized")
+// NewChannelService creates a Discovery Service to query the list of member peers on a given channel.
+func NewChannelService(ctx contextAPI.Client, membership fab.ChannelMembership, channelID string, opts ...coptions.Opt) (*ChannelService, error) {
+	logger.Debug("Creating new dynamic discovery service")
+	s := &ChannelService{
+		channelID:  channelID,
+		membership: membership,
+	}
+	s.service = newService(ctx.EndpointConfig(), s.queryPeers, opts...)
+	err := s.service.initialize(ctx)
+	if err != nil {
+		return nil, err
 	}
 
-	targets, err := s.getTargets(channelContext)
+	return s, nil
+}
+
+// Close releases resources
+func (s *ChannelService) Close() {
+	logger.Debugf("Closing discovery service for channel [%s]", s.channelID)
+	s.service.Close()
+}
+
+func (s *ChannelService) queryPeers() ([]fab.Peer, error) {
+	logger.Debugf("Refreshing peers of channel [%s] from discovery service...", s.channelID)
+
+	ctx := s.context()
+
+	targets, err := s.getTargets(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if len(targets) == 0 {
-		return nil, errors.Errorf("no peers configured for channel [%s]", channelContext.ChannelID())
+		return nil, errors.Errorf("no peers configured for channel [%s]", s.channelID)
 	}
 
-	reqCtx, cancel := reqContext.NewRequest(channelContext, reqContext.WithTimeout(s.responseTimeout))
+	reqCtx, cancel := reqContext.NewRequest(ctx, reqContext.WithTimeout(s.responseTimeout))
 	defer cancel()
 
-	req := discclient.NewRequest().OfChannel(channelContext.ChannelID()).AddPeersQuery()
+	req := discclient.NewRequest().OfChannel(s.channelID).AddPeersQuery()
 	responses, err := s.discoveryClient().Send(reqCtx, req, targets...)
 	if err != nil {
 		if len(responses) == 0 {
@@ -67,38 +72,68 @@ func (s *channelService) queryPeers() ([]fab.Peer, error) {
 		}
 		logger.Warnf("Received %d response(s) and one or more errors from discovery client: %s", len(responses), err)
 	}
-	return s.evaluate(channelContext, responses)
+	return s.evaluate(ctx, responses)
 }
 
-func (s *channelService) getTargets(ctx contextAPI.Channel) ([]fab.PeerConfig, error) {
-	// TODO: The number of peers to query should be retrieved from the channel policy.
-	// This will done in a future patch.
-	chpeers, err := ctx.EndpointConfig().ChannelPeers(ctx.ChannelID())
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get peer configs for channel [%s]", ctx.ChannelID())
+func (s *ChannelService) getTargets(ctx contextAPI.Client) ([]fab.PeerConfig, error) {
+	chPeers := ctx.EndpointConfig().ChannelPeers(s.channelID)
+	if len(chPeers) == 0 {
+		return nil, errors.Errorf("no channel peers configured for channel [%s]", s.channelID)
 	}
-	targets := make([]fab.PeerConfig, len(chpeers))
-	for i := 0; i < len(targets); i++ {
-		targets[i] = chpeers[i].NetworkPeer.PeerConfig
-	}
-	return targets, nil
+
+	chConfig := ctx.EndpointConfig().ChannelConfig(s.channelID)
+
+	//pick number of peers given in channel policy
+	return random.PickRandomNPeerConfigs(chPeers, chConfig.Policies.Discovery.MaxTargets), nil
 }
 
 // evaluate validates the responses and returns the peers
-func (s *channelService) evaluate(ctx contextAPI.Channel, responses []fabdiscovery.Response) ([]fab.Peer, error) {
+func (s *ChannelService) evaluate(ctx contextAPI.Client, responses []fabdiscovery.Response) ([]fab.Peer, error) {
 	if len(responses) == 0 {
 		return nil, errors.New("no successful response received from any peer")
 	}
 
 	// TODO: In a future patch:
 	// - validate the signatures in the responses
-	// - ensure N responses match according to the policy
-	// For now just pick the first response
-	response := responses[0]
-	endpoints, err := response.ForChannel(ctx.ChannelID()).Peers()
-	if err != nil {
-		return nil, errors.Wrapf(err, "error getting peers from discovery response")
-	}
+	// For now just pick the first successful response
 
-	return asPeers(ctx, endpoints), nil
+	var lastErr error
+	for _, response := range responses {
+		endpoints, err := response.ForChannel(s.channelID).Peers()
+		if err != nil {
+			lastErr = errors.Wrap(err, "error getting peers from discovery response")
+			logger.Warn(lastErr.Error())
+			continue
+		}
+		return s.asPeers(ctx, endpoints), nil
+	}
+	return nil, lastErr
+}
+
+func (s *ChannelService) asPeers(ctx contextAPI.Client, endpoints []*discclient.Peer) []fab.Peer {
+	var peers []fab.Peer
+	for _, endpoint := range endpoints {
+		peer, ok := asPeer(ctx, endpoint)
+		if !ok {
+			continue
+		}
+
+		//check if cache is updated with tlscert if this is a new org joined and membership is not done yet updating cache
+		if s.membership.ContainsMSP(peer.MSPID()) {
+			peers = append(peers, &peerEndpoint{
+				Peer:        peer,
+				blockHeight: endpoint.StateInfoMessage.GetStateInfo().GetProperties().LedgerHeight,
+			})
+		}
+	}
+	return peers
+}
+
+type peerEndpoint struct {
+	fab.Peer
+	blockHeight uint64
+}
+
+func (p *peerEndpoint) BlockHeight() uint64 {
+	return p.blockHeight
 }

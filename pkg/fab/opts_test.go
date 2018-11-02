@@ -8,19 +8,15 @@ package fab
 
 import (
 	"crypto/tls"
-	"crypto/x509"
 	"testing"
 	"time"
 
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
-	"github.com/hyperledger/fabric-sdk-go/pkg/core/config/endpoint"
 )
 
 var (
 	m0  = &EndpointConfig{}
 	m1  = &mockTimeoutConfig{}
-	m2  = &mockMspID{}
-	m3  = &mockPeerMSPID{}
 	m4  = &mockrderersConfig{}
 	m5  = &mockOrdererConfig{}
 	m6  = &mockPeersConfig{}
@@ -31,7 +27,6 @@ var (
 	m11 = &mockChannelPeers{}
 	m12 = &mockChannelOrderers{}
 	m13 = &mockTLSCACertPool{}
-	m14 = &mockEventServiceType{}
 	m15 = &mockTLSClientCerts{}
 	m16 = &mockCryptoConfigPath{}
 )
@@ -45,13 +40,13 @@ func TestCreateCustomFullEndpointConfig(t *testing.T) {
 		t.Fatalf("BuildConfigEndpointFromOptions returned unexpected error %s", err)
 	}
 	if endpointConfigOption == nil {
-		t.Fatalf("BuildConfigEndpointFromOptions call returned nil")
+		t.Fatal("BuildConfigEndpointFromOptions call returned nil")
 	}
 }
 
 func TestCreateCustomEndpointConfig(t *testing.T) {
 	// try to build with partial interfaces
-	endpointConfigOption, err := BuildConfigEndpointFromOptions(m1, m2, m3, m4, m5, m6, m7, m8, m9, m10)
+	endpointConfigOption, err := BuildConfigEndpointFromOptions(m1, m4, m5, m6, m7, m8, m9, m10)
 	if err != nil {
 		t.Fatalf("BuildConfigEndpointFromOptions returned unexpected error %s", err)
 	}
@@ -61,25 +56,11 @@ func TestCreateCustomEndpointConfig(t *testing.T) {
 		t.Fatalf("BuildConfigEndpointFromOptions did not return a Options instance %T", endpointConfigOption)
 	}
 	if eco == nil {
-		t.Fatalf("build ConfigEndpointOption returned is nil")
+		t.Fatal("build ConfigEndpointOption returned is nil")
 	}
-	tmout := eco.Timeout(fab.EndorserConnection)
+	tmout := eco.Timeout(fab.PeerConnection)
 	if tmout < 0 {
 		t.Fatalf("EndpointConfig was supposed to have Timeout function overridden from Options but was not %+v. Timeout: %s", eco, tmout)
-	}
-	m, err := eco.MSPID("")
-	if err != nil {
-		t.Fatalf("MSPID returned unexpected error %s", err)
-	}
-	if m != "testMSP" {
-		t.Fatalf("MSPID did not return expected interface value. Expected: %s, Received: %s", "testMSP", m)
-	}
-	m, err = eco.PeerMSPID("")
-	if err != nil {
-		t.Fatalf("PeerMSPID returned unexpected error %s", err)
-	}
-	if m != "testPeerMSP" {
-		t.Fatalf("MSPID did not return expected interface value. Expected: %s, Received: %s", "testPeerMSP", m)
 	}
 
 	// verify if an interface was not passed as an option but was not nil, it should be nil
@@ -90,7 +71,7 @@ func TestCreateCustomEndpointConfig(t *testing.T) {
 
 func TestCreateCustomEndpointConfigRemainingFunctions(t *testing.T) {
 	// test other sub interface functions
-	endpointConfigOption, err := BuildConfigEndpointFromOptions(m11, m12, m13, m14, m15, m16)
+	endpointConfigOption, err := BuildConfigEndpointFromOptions(m11, m12, m13, m15, m16)
 	if err != nil {
 		t.Fatalf("BuildConfigEndpointFromOptions returned unexpected error %s", err)
 	}
@@ -100,21 +81,15 @@ func TestCreateCustomEndpointConfigRemainingFunctions(t *testing.T) {
 		t.Fatalf("BuildConfigEndpointFromOptions did not return a Options instance %T", endpointConfigOption)
 	}
 	if eco == nil {
-		t.Fatalf("build ConfigEndpointOption returned is nil")
+		t.Fatal("build ConfigEndpointOption returned is nil")
 	}
 	// verify that their functions are available
-	p, err := eco.ChannelPeers("")
-	if err != nil {
-		t.Fatalf("ChannelPeers returned unexpected error %s", err)
-	}
+	p := eco.ChannelPeers("")
 	if len(p) != 1 {
 		t.Fatalf("ChannelPeers did not return expected interface value. Expected: 1 ChannelPeer, Received: %d", len(p))
 	}
 
-	c, err := eco.TLSClientCerts()
-	if err != nil {
-		t.Fatalf("TLSClientCerts returned unexpected error %s", err)
-	}
+	c := eco.TLSClientCerts()
 	if len(c) != 2 {
 		t.Fatalf("TLSClientCerts did not return expected interface value. Expected: 2 Certificates, Received: %d", len(c))
 	}
@@ -128,13 +103,13 @@ func TestCreateCustomEndpointConfigRemainingFunctions(t *testing.T) {
 	var badType interface{}
 	_, err = BuildConfigEndpointFromOptions(m12, m13, badType)
 	if err == nil {
-		t.Fatalf("BuildConfigEndpointFromOptions did not return error with badType")
+		t.Fatal("BuildConfigEndpointFromOptions did not return error with badType")
 	}
 }
 
 func TestCreateCustomEndpointConfigWithSomeDefaultFunctions(t *testing.T) {
 	// create a config with the first 7 interfaces to be overridden
-	endpointConfigOption, err := BuildConfigEndpointFromOptions(m1, m2, m3, m4, m5, m6, m7)
+	endpointConfigOption, err := BuildConfigEndpointFromOptions(m1, m4, m5, m6, m7)
 	if err != nil {
 		t.Fatalf("BuildConfigEndpointFromOptions returned unexpected error %s", err)
 	}
@@ -145,24 +120,17 @@ func TestCreateCustomEndpointConfigWithSomeDefaultFunctions(t *testing.T) {
 		t.Fatalf("BuildConfigEndpointFromOptions did not return a Options instance %T", endpointConfigOption)
 	}
 	if eco == nil {
-		t.Fatalf("build ConfigEndpointOption returned is nil")
+		t.Fatal("build ConfigEndpointOption returned is nil")
 	}
 
 	// now inject default interfaces (using m0 as default interface for the sake of this test) for the ones that were not overridden by options above
 	endpointConfigOptionWithSomeDefaults := UpdateMissingOptsWithDefaultConfig(eco, m0)
 
 	// test if options updated interfaces with options are still working
-	tmout := endpointConfigOptionWithSomeDefaults.Timeout(fab.EndorserConnection)
+	tmout := endpointConfigOptionWithSomeDefaults.Timeout(fab.PeerConnection)
 	expectedTimeout := 10 * time.Second
 	if tmout != expectedTimeout {
 		t.Fatalf("EndpointConfig was supposed to have Timeout function overridden from Options but was not %+v. Timeout: [expected: %s, received: %s]", eco, expectedTimeout, tmout)
-	}
-	m, err := endpointConfigOptionWithSomeDefaults.MSPID("")
-	if err != nil {
-		t.Fatalf("MSPID returned unexpected error %s", err)
-	}
-	if m != "testMSP" {
-		t.Fatalf("MSPID did not return expected interface value. Expected: %s, Received: %s", "testMSP", m)
 	}
 
 	// now check if interfaces that are not updated are defaulted with m0
@@ -171,17 +139,17 @@ func TestCreateCustomEndpointConfigWithSomeDefaultFunctions(t *testing.T) {
 	}
 	// cryptoConfigPath (m17) is among the interfaces that were not updated by options
 	if eco.cryptoConfigPath == nil {
-		t.Fatalf("UpdateMissingOptsWithDefaultConfig did not set CryptoConfigPath() with default function implementation")
+		t.Fatal("UpdateMissingOptsWithDefaultConfig did not set CryptoConfigPath() with default function implementation")
 	}
 	// tlsClientCerts (m16) is among the interfaces that were not updated by options
 	if eco.tlsClientCerts == nil {
-		t.Fatalf("UpdateMissingOptsWithDefaultConfig did not set TLSClientCerts() with default function implementation")
+		t.Fatal("UpdateMissingOptsWithDefaultConfig did not set TLSClientCerts() with default function implementation")
 	}
 }
 
 func TestIsEndpointConfigFullyOverridden(t *testing.T) {
 	// test with the some interfaces
-	endpointConfigOption, err := BuildConfigEndpointFromOptions(m1, m2, m3)
+	endpointConfigOption, err := BuildConfigEndpointFromOptions(m1)
 	if err != nil {
 		t.Fatalf("BuildConfigEndpointFromOptions returned unexpected error %s", err)
 	}
@@ -196,7 +164,7 @@ func TestIsEndpointConfigFullyOverridden(t *testing.T) {
 	// only 3 interfaces were overridden, so expected value is false
 	isFullyOverridden := IsEndpointConfigFullyOverridden(eco)
 	if isFullyOverridden {
-		t.Fatalf("Expected not fully overridden EndpointConfig interface, but received fully overridden.")
+		t.Fatal("Expected not fully overridden EndpointConfig interface, but received fully overridden.")
 	}
 
 	// now try with no opts, expected value is also false
@@ -210,11 +178,11 @@ func TestIsEndpointConfigFullyOverridden(t *testing.T) {
 
 	isFullyOverridden = IsEndpointConfigFullyOverridden(eco)
 	if isFullyOverridden {
-		t.Fatalf("Expected not fully overridden EndpointConfig interface, but received fully overridden.")
+		t.Fatal("Expected not fully overridden EndpointConfig interface, but received fully overridden.")
 	}
 
 	// now try with all opts, expected value is true this time
-	endpointConfigOption, err = BuildConfigEndpointFromOptions(m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15, m16)
+	endpointConfigOption, err = BuildConfigEndpointFromOptions(m1, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m15, m16)
 	if err != nil {
 		t.Fatalf("BuildConfigEndpointFromOptions returned unexpected error %s", err)
 	}
@@ -224,13 +192,13 @@ func TestIsEndpointConfigFullyOverridden(t *testing.T) {
 
 	isFullyOverridden = IsEndpointConfigFullyOverridden(eco)
 	if !isFullyOverridden {
-		t.Fatalf("Expected fully overridden EndpointConfig interface, but received not fully overridden.")
+		t.Fatal("Expected fully overridden EndpointConfig interface, but received not fully overridden.")
 	}
 }
 
 func TestCreateCustomEndpointConfigWithSomeDefaultFunctionsRemainingFunctions(t *testing.T) {
 	// do the same test with the other interfaces in reverse
-	endpointConfigOption, err := BuildConfigEndpointFromOptions(m8, m9, m10, m11, m12, m13, m14, m15, m16)
+	endpointConfigOption, err := BuildConfigEndpointFromOptions(m8, m9, m10, m11, m12, m13, m15, m16)
 	if err != nil {
 		t.Fatalf("BuildConfigEndpointFromOptions returned unexpected error %s", err)
 	}
@@ -241,7 +209,7 @@ func TestCreateCustomEndpointConfigWithSomeDefaultFunctionsRemainingFunctions(t 
 		t.Fatalf("BuildConfigEndpointFromOptions did not return a Options instance %T", endpointConfigOption)
 	}
 	if eco == nil {
-		t.Fatalf("build ConfigEndpointOption returned is nil")
+		t.Fatal("build ConfigEndpointOption returned is nil")
 	}
 
 	// now inject default interfaces
@@ -252,12 +220,6 @@ func TestCreateCustomEndpointConfigWithSomeDefaultFunctionsRemainingFunctions(t 
 	if m != "" {
 		t.Fatalf("CryptoConfigPath did not return expected interface value. Expected: '%s', Received: %s", "", m)
 	}
-	e := endpointConfigOptionWithSomeDefaults.EventServiceType()
-
-	if e != fab.DeliverEventServiceType {
-		t.Fatalf("MSPID did not return expected interface value. Expected: %d, Received: %d", fab.DeliverEventServiceType, e)
-
-	}
 }
 
 type mockTimeoutConfig struct{}
@@ -266,88 +228,70 @@ func (m *mockTimeoutConfig) Timeout(timeoutType fab.TimeoutType) time.Duration {
 	return 10 * time.Second
 }
 
-type mockMspID struct{}
-
-func (m *mockMspID) MSPID(org string) (string, error) {
-	return "testMSP", nil
-}
-
-type mockPeerMSPID struct{}
-
-func (m *mockPeerMSPID) PeerMSPID(name string) (string, error) {
-	return "testPeerMSP", nil
-}
-
 type mockrderersConfig struct{}
 
-func (m *mockrderersConfig) OrderersConfig() ([]fab.OrdererConfig, error) {
-	return []fab.OrdererConfig{{URL: "orderer1.com", GRPCOptions: nil, TLSCACerts: endpoint.TLSConfig{Path: "", Pem: ""}}}, nil
+func (m *mockrderersConfig) OrderersConfig() []fab.OrdererConfig {
+	return []fab.OrdererConfig{{URL: "orderer1.com", GRPCOptions: nil, TLSCACert: nil}}
 }
 
 type mockOrdererConfig struct{}
 
-func (m *mockOrdererConfig) OrdererConfig(name string) (*fab.OrdererConfig, error) {
-	return &fab.OrdererConfig{URL: "o.com", GRPCOptions: nil, TLSCACerts: endpoint.TLSConfig{Path: "", Pem: ""}}, nil
+func (m *mockOrdererConfig) OrdererConfig(name string) (*fab.OrdererConfig, bool) {
+	return &fab.OrdererConfig{URL: "o.com", GRPCOptions: nil, TLSCACert: nil}, true
 }
 
 type mockPeersConfig struct{}
 
-func (m *mockPeersConfig) PeersConfig(org string) ([]fab.PeerConfig, error) {
-	return []fab.PeerConfig{{URL: "peer.com", EventURL: "event.peer.com", GRPCOptions: nil, TLSCACerts: endpoint.TLSConfig{Path: "", Pem: ""}}}, nil
+func (m *mockPeersConfig) PeersConfig(org string) ([]fab.PeerConfig, bool) {
+	return []fab.PeerConfig{{URL: "peer.com", GRPCOptions: nil, TLSCACert: nil}}, true
 }
 
 type mockPeerConfig struct{}
 
-func (m *mockPeerConfig) PeerConfig(nameOrURL string) (*fab.PeerConfig, error) {
-	return &fab.PeerConfig{URL: "p.com", EventURL: "event.p.com", GRPCOptions: nil, TLSCACerts: endpoint.TLSConfig{Path: "", Pem: ""}}, nil
+func (m *mockPeerConfig) PeerConfig(nameOrURL string) (*fab.PeerConfig, bool) {
+	return &fab.PeerConfig{URL: "p.com", GRPCOptions: nil, TLSCACert: nil}, true
 }
 
 type mockNetworkConfig struct{}
 
-func (m *mockNetworkConfig) NetworkConfig() (*fab.NetworkConfig, error) {
-	return &fab.NetworkConfig{}, nil
+func (m *mockNetworkConfig) NetworkConfig() *fab.NetworkConfig {
+	return &fab.NetworkConfig{}
 }
 
 type mockNetworkPeers struct{}
 
-func (m *mockNetworkPeers) NetworkPeers() ([]fab.NetworkPeer, error) {
-	return []fab.NetworkPeer{{PeerConfig: fab.PeerConfig{URL: "p.com", EventURL: "event.p.com", GRPCOptions: nil, TLSCACerts: endpoint.TLSConfig{Path: "", Pem: ""}}, MSPID: ""}}, nil
+func (m *mockNetworkPeers) NetworkPeers() []fab.NetworkPeer {
+	return []fab.NetworkPeer{{PeerConfig: fab.PeerConfig{URL: "p.com", GRPCOptions: nil, TLSCACert: nil}, MSPID: ""}}
 }
 
 type mockChannelConfig struct{}
 
-func (m *mockChannelConfig) ChannelConfig(name string) (*fab.ChannelNetworkConfig, error) {
-	return &fab.ChannelNetworkConfig{}, nil
+func (m *mockChannelConfig) ChannelConfig(name string) *fab.ChannelEndpointConfig {
+	return &fab.ChannelEndpointConfig{}
 }
 
 type mockChannelPeers struct{}
 
-func (m *mockChannelPeers) ChannelPeers(name string) ([]fab.ChannelPeer, error) {
-	return []fab.ChannelPeer{{}}, nil
+func (m *mockChannelPeers) ChannelPeers(name string) []fab.ChannelPeer {
+	return []fab.ChannelPeer{{}}
 }
 
 type mockChannelOrderers struct{}
 
-func (m *mockChannelOrderers) ChannelOrderers(name string) ([]fab.OrdererConfig, error) {
-	return []fab.OrdererConfig{}, nil
+func (m *mockChannelOrderers) ChannelOrderers(name string) []fab.OrdererConfig {
+	return []fab.OrdererConfig{}
 }
 
 type mockTLSCACertPool struct{}
 
-func (m *mockTLSCACertPool) TLSCACertPool(certConfig ...*x509.Certificate) (*x509.CertPool, error) {
-	return nil, nil
-}
-
-type mockEventServiceType struct{}
-
-func (m *mockEventServiceType) EventServiceType() fab.EventServiceType {
-	return fab.DeliverEventServiceType
+func (m *mockTLSCACertPool) TLSCACertPool() fab.CertPool {
+	return nil
 }
 
 type mockTLSClientCerts struct{}
 
-func (m *mockTLSClientCerts) TLSClientCerts() ([]tls.Certificate, error) {
-	return []tls.Certificate{{}, {}}, nil
+func (m *mockTLSClientCerts) TLSClientCerts() []tls.Certificate {
+	return []tls.Certificate{{}, {}}
 }
 
 type mockCryptoConfigPath struct{}

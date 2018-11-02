@@ -25,15 +25,15 @@ func TestUserMethods(t *testing.T) {
 
 	configBackend, err := config.FromFile("../../test/fixtures/config/config_test.yaml")()
 	if err != nil {
-		t.Fatalf("Failed to read config: %v", err)
+		t.Fatalf("Failed to read config: %s", err)
 	}
 	cryptoConfig := cryptosuite.ConfigFromBackend(configBackend...)
 	if err != nil {
-		t.Fatalf("Failed to read config: %v", err)
+		t.Fatalf("Failed to read config: %s", err)
 	}
 	identityConfig, err := ConfigFromBackend(configBackend...)
 	if err != nil {
-		t.Fatalf("Failed to read config: %v", err)
+		t.Fatalf("Failed to read config: %s", err)
 	}
 	// Delete all private keys from the crypto suite store
 	// and users from the user store
@@ -44,7 +44,7 @@ func TestUserMethods(t *testing.T) {
 
 	cryptoSuite, err := cryptosuiteimpl.GetSuiteByConfig(cryptoConfig)
 	if cryptoSuite == nil {
-		t.Fatalf("Failed initialize cryptoSuite: %v", err)
+		t.Fatalf("Failed initialize cryptoSuite: %s", err)
 	}
 
 	// Missing enrollment cert
@@ -54,14 +54,14 @@ func TestUserMethods(t *testing.T) {
 	}
 	_, err = newUser(userData, cryptoSuite)
 	if err == nil {
-		t.Fatalf("Expected newUser to fail when missing enrollment cert")
+		t.Fatal("Expected newUser to fail when missing enrollment cert")
 	}
 
 	// User not enrolled (have cert, but private key is not in crypto store)
 	userData.EnrollmentCertificate = generatedCertBytes
 	_, err = newUser(userData, cryptoSuite)
 	if err == nil {
-		t.Fatalf("Expected newUser to fail when user is not enrolled")
+		t.Fatal("Expected newUser to fail when user is not enrolled")
 	}
 
 	// Import the key into the crypto suite's private key storage.
@@ -73,11 +73,11 @@ func TestUserMethods(t *testing.T) {
 func verifyUserIdentity(cryptoSuite core.CryptoSuite, t *testing.T, userData *msp.UserData, testUserMSPID string, testUsername string) {
 	generatedKey, err := util.ImportBCCSPKeyFromPEMBytes(generatedKeyBytes, cryptoSuite, false)
 	if err != nil {
-		t.Fatalf("ImportBCCSPKeyFromPEMBytes failed %v", err)
+		t.Fatalf("ImportBCCSPKeyFromPEMBytes failed %s", err)
 	}
 	user, err := newUser(userData, cryptoSuite)
 	if err != nil {
-		t.Fatalf("newUser failed: %v", err)
+		t.Fatalf("newUser failed: %s", err)
 	}
 	// Check MSPID
 	if user.Identifier().MSPID != testUserMSPID {
@@ -85,7 +85,7 @@ func verifyUserIdentity(cryptoSuite core.CryptoSuite, t *testing.T, userData *ms
 	}
 	// Check Name
 	if user.Identifier().ID != testUsername {
-		t.Fatalf("NewUser create wrong user")
+		t.Fatal("NewUser create wrong user")
 	}
 	// Check EnrolmentCert
 	verifyBytes(t, user.EnrollmentCertificate(), generatedCertBytes)
@@ -101,11 +101,11 @@ func verifyBytes(t *testing.T, v interface{}, expected []byte) error {
 	} else {
 		vbytes, ok = v.([]byte)
 		if !ok {
-			t.Fatalf("value is not []byte")
+			t.Fatal("value is not []byte")
 		}
 	}
 	if !bytes.Equal(vbytes, expected) {
-		t.Fatalf("value from store comparison failed")
+		t.Fatal("value from store comparison failed")
 	}
 	return nil
 }

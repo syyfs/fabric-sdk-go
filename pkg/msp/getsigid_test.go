@@ -7,18 +7,16 @@ SPDX-License-Identifier: Apache-2.0
 package msp
 
 import (
+	"fmt"
 	"math/rand"
 	"strconv"
 	"strings"
 	"testing"
 
-	"fmt"
-
 	fabricCaUtil "github.com/hyperledger/fabric-sdk-go/internal/github.com/hyperledger/fabric-ca/util"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/core"
 	providersFab "github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/msp"
-
 	"github.com/hyperledger/fabric-sdk-go/pkg/core/config"
 	"github.com/hyperledger/fabric-sdk-go/pkg/core/cryptosuite"
 	"github.com/hyperledger/fabric-sdk-go/pkg/core/cryptosuite/bccsp/sw"
@@ -56,16 +54,13 @@ func TestGetSigningIdentity(t *testing.T) {
 
 	cryptoConfig, endpointConfig, identityConfig, orgConfig := getConfigs(t)
 	mspID := orgConfig.MSPID
-	clientCofig, err := identityConfig.Client()
-	if err != nil {
-		t.Fatalf("Unable to retrieve client config: %v", err)
-	}
+	clientConfig := identityConfig.Client()
 
 	// Cleanup key store and user store
 	cleanupTestPath(t, cryptoConfig.KeyStorePath())
 	defer cleanupTestPath(t, cryptoConfig.KeyStorePath())
-	cleanupTestPath(t, clientCofig.CredentialStore.Path)
-	defer cleanupTestPath(t, clientCofig.CredentialStore.Path)
+	cleanupTestPath(t, clientConfig.CredentialStore.Path)
+	defer cleanupTestPath(t, clientConfig.CredentialStore.Path)
 
 	cryptoSuite, err := sw.GetSuiteByConfig(cryptoConfig)
 	if err != nil {
@@ -97,25 +92,29 @@ func TestGetSigningIdentity(t *testing.T) {
 
 	// "Manually" enroll User1
 	enrollUser1(cryptoSuite, t, mspID, testUsername, userStore, mgr)
+	// Should succeed after enrollment
+	if err := checkSigningIdentity(mgr, testUsername); err != nil {
+		t.Fatalf("checkSigningIdentity failed: %s", err)
+	}
 }
 
 func getConfigs(t *testing.T) (core.CryptoSuiteConfig, providersFab.EndpointConfig, msp.IdentityConfig, providersFab.OrganizationConfig) {
 	configBackend, err := config.FromFile("../../pkg/core/config/testdata/config_test.yaml")()
 	if err != nil {
-		t.Fatalf(err.Error())
+		t.Fatal(err)
 	}
 	cryptoConfig := cryptosuite.ConfigFromBackend(configBackend...)
 	endpointConfig, err := fab.ConfigFromBackend(configBackend...)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to read config: %v", err))
+		panic(fmt.Sprintf("Failed to read config: %s", err))
 	}
 	identityConfig, err := ConfigFromBackend(configBackend...)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to read config: %v", err))
+		panic(fmt.Sprintf("Failed to read config: %s", err))
 	}
-	netConfig, err := endpointConfig.NetworkConfig()
-	if err != nil {
-		t.Fatalf("Failed to setup netConfig: %s", err)
+	netConfig := endpointConfig.NetworkConfig()
+	if netConfig == nil {
+		t.Fatal("Failed to setup netConfig")
 	}
 	orgConfig, ok := netConfig.Organizations[strings.ToLower(orgName)]
 	if !ok {
@@ -138,10 +137,6 @@ func enrollUser1(cryptoSuite core.CryptoSuite, t *testing.T, mspID string, testU
 	err = userStore.Store(user1)
 	if err != nil {
 		t.Fatalf("userStore.Store: %s", err)
-	}
-	// Should succeed after enrollment
-	if err := checkSigningIdentity(mgr, testUsername); err != nil {
-		t.Fatalf("checkSigningIdentity failed: %s", err)
 	}
 }
 
@@ -173,17 +168,17 @@ func TestGetSigningIdentityInvalidOrg(t *testing.T) {
 
 	configBackend, err := config.FromFile("../../pkg/core/config/testdata/config_test.yaml")()
 	if err != nil {
-		t.Fatalf(err.Error())
+		t.Fatal(err)
 	}
 
 	endpointConfig, err := fab.ConfigFromBackend(configBackend...)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to read config: %v", err))
+		panic(fmt.Sprintf("Failed to read config: %s", err))
 	}
 
 	identityConfig, err := ConfigFromBackend(configBackend...)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to read config: %v", err))
+		panic(fmt.Sprintf("Failed to read config: %s", err))
 	}
 	userStore := userStoreFromConfig(t, identityConfig)
 
@@ -199,20 +194,22 @@ func TestGetSigningIdentityFromEmbeddedCryptoConfig(t *testing.T) {
 
 	configBackend, err := config.FromFile("../../pkg/core/config/testdata/config_test_embedded_pems.yaml")()
 	if err != nil {
-		t.Fatalf(err.Error())
+		t.Fatal(err)
 	}
+
+	if _, ok := configBackend[0].Lookup("client.cryptoconfig"); ok {
+		t.Fatal("Expected that client.cryptoconfig is not defined")
+	}
+	if _, ok := configBackend[0].Lookup("client.credentialStore"); ok {
+		t.Fatal("Expected that client.credentialStore is not defined")
+	}
+
 	endpointConfig, err := fab.ConfigFromBackend(configBackend...)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to read config: %v", err))
+		panic(fmt.Sprintf("Failed to read config: %s", err))
 	}
 
-	identityConfig, err := ConfigFromBackend(configBackend...)
-	if err != nil {
-		panic(fmt.Sprintf("Failed to read config: %v", err))
-	}
-	userStore := userStoreFromConfig(t, identityConfig)
-
-	mgr, err := NewIdentityManager(orgName, userStore, cryptosuite.GetDefault(), endpointConfig)
+	mgr, err := NewIdentityManager(orgName, nil, cryptosuite.GetDefault(), endpointConfig)
 	if err != nil {
 		t.Fatalf("Failed to setup credential manager: %s", err)
 	}
@@ -220,14 +217,62 @@ func TestGetSigningIdentityFromEmbeddedCryptoConfig(t *testing.T) {
 	checkSigningIdentityFromEmbeddedCryptoConfig(mgr, t)
 }
 
-func checkSigningIdentityFromEmbeddedCryptoConfig(mgr *IdentityManager, t *testing.T) {
+func TestGetSigningIdentityFromMSPDir(t *testing.T) {
+
+	configBackend, err := config.FromFile("../../pkg/core/config/testdata/config_test_msp_only.yaml")()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := configBackend[0].Lookup("client.cryptoconfig.path"); !ok {
+		t.Fatal("Expected that client.cryptoconfig.path is defined")
+	}
+	if _, ok := configBackend[0].Lookup("client.credentialStore"); ok {
+		t.Fatal("Expected that client.credentialStore is not defined")
+	}
+
+	endpointConfig, err := fab.ConfigFromBackend(configBackend...)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to read config: %s", err))
+	}
+
+	mgr, err := NewIdentityManager(orgName, nil, cryptosuite.GetDefault(), endpointConfig)
+	if err != nil {
+		t.Fatalf("Failed to setup credential manager: %s", err)
+	}
+
+	if len(mgr.embeddedUsers) > 0 {
+		t.Fatal("Expected no embedded users")
+	}
+
+	checkSigningIdentityFromMSPDir(mgr, t)
+}
+
+func checkSigningIdentityFromMSPDir(mgr *IdentityManager, t *testing.T) {
 	_, err := mgr.GetSigningIdentity("")
 	if err == nil {
-		t.Fatalf("Should get error for empty user name")
+		t.Fatal("Should get error for empty user name")
 	}
 	_, err = mgr.GetSigningIdentity("Non-Existent")
 	if err != msp.ErrUserNotFound {
-		t.Fatalf("Should get ErrUserNotFound for non-existent user, got %v", err)
+		t.Fatalf("Should get ErrUserNotFound for non-existent user, got %s", err)
+	}
+	if err := checkSigningIdentity(mgr, "Admin"); err != nil {
+		t.Fatalf("checkSigningIdentity failes: %s", err)
+	}
+	if err := checkSigningIdentity(mgr, "User1"); err != nil {
+		t.Fatalf("checkSigningIdentity failes: %s", err)
+	}
+}
+
+func checkSigningIdentityFromEmbeddedCryptoConfig(mgr *IdentityManager, t *testing.T) {
+	_, err := mgr.GetSigningIdentity("")
+	if err == nil {
+		t.Fatal("Should get error for empty user name")
+	}
+	_, err = mgr.GetSigningIdentity("Non-Existent")
+	if err != msp.ErrUserNotFound {
+		t.Fatalf("Should get ErrUserNotFound for non-existent user, got %s", err)
 	}
 	if err := checkSigningIdentity(mgr, "EmbeddedUser"); err != nil {
 		t.Fatalf("checkSigningIdentity failes: %s", err)
@@ -241,6 +286,121 @@ func checkSigningIdentityFromEmbeddedCryptoConfig(mgr *IdentityManager, t *testi
 	if err := checkSigningIdentity(mgr, "EmbeddedUserMixed2"); err != nil {
 		t.Fatalf("checkSigningIdentity failes: %s", err)
 	}
+}
+
+func TestCreateSigningIdentityNegative(t *testing.T) {
+	cryptoConfig, endpointConfig, identityConfig, _ := getConfigs(t)
+	clientConfig := identityConfig.Client()
+
+	// Cleanup key store and user store
+	cleanupTestPath(t, cryptoConfig.KeyStorePath())
+	defer cleanupTestPath(t, cryptoConfig.KeyStorePath())
+	cleanupTestPath(t, clientConfig.CredentialStore.Path)
+	defer cleanupTestPath(t, clientConfig.CredentialStore.Path)
+
+	cryptoSuite, err := sw.GetSuiteByConfig(cryptoConfig)
+	if err != nil {
+		t.Fatalf("Failed to setup cryptoSuite: %s", err)
+	}
+
+	// userStore should be probably nil in this use case,
+	// as client doesn't want SDK to manage certs.
+	userStore := msp.UserStore(nil)
+	mgr, err := NewIdentityManager(orgName, userStore, cryptoSuite, endpointConfig)
+	if err != nil {
+		t.Fatalf("Failed to setup credential manager: %s", err)
+	}
+
+	_, err = mgr.CreateSigningIdentity()
+	if err == nil {
+		t.Fatalf("Should have failed to create signing identity with no certificate")
+	}
+
+	_, err = mgr.CreateSigningIdentity(msp.WithPrivateKey([]byte(testPrivKey)))
+	if err == nil {
+		t.Fatalf("Should have failed to create signing identity with only private key")
+	}
+
+	_, err = mgr.CreateSigningIdentity(func(_ *msp.IdentityOption) error {
+		return errors.New("failed")
+	})
+	if err == nil {
+		t.Fatalf("Should have failed with failing option")
+	}
+
+	_, err = mgr.CreateSigningIdentity(msp.WithCert([]byte(testCert)))
+	if err == nil {
+		t.Fatalf("Should have failed to create signing identity without imported private key")
+	}
+}
+
+func TestCreateSigningIdentity(t *testing.T) {
+	cryptoConfig, endpointConfig, identityConfig, _ := getConfigs(t)
+	clientConfig := identityConfig.Client()
+
+	// Cleanup key store and user store
+	cleanupTestPath(t, cryptoConfig.KeyStorePath())
+	defer cleanupTestPath(t, cryptoConfig.KeyStorePath())
+	cleanupTestPath(t, clientConfig.CredentialStore.Path)
+	defer cleanupTestPath(t, clientConfig.CredentialStore.Path)
+
+	cryptoSuite, err := sw.GetSuiteByConfig(cryptoConfig)
+	if err != nil {
+		t.Fatalf("Failed to setup cryptoSuite: %s", err)
+	}
+
+	// userStore should be probably nil in this use case,
+	// as client doesn't want SDK to manage certs.
+	userStore := msp.UserStore(nil)
+	mgr, err := NewIdentityManager(orgName, userStore, cryptoSuite, endpointConfig)
+	if err != nil {
+		t.Fatalf("Failed to setup credential manager: %s", err)
+	}
+
+	id, err := mgr.CreateSigningIdentity(msp.WithCert([]byte(testCert)), msp.WithPrivateKey([]byte(testPrivKey)))
+	if err != nil {
+		t.Fatalf("Failed when creating identity based on certificate and private key: %s", err)
+	}
+	if err := validateTestIdentity(id); err != nil {
+		t.Fatal(err)
+	}
+
+	// In this user case client might want to import keys directly into keystore
+	// out of band instead of enrolling the user via SDK. User enrolment creates a cert
+	// and stores it into local SDK user store, while user might not want SDK to manage certs.
+	err = importPrivateKeyOutOfBand([]byte(testPrivKey), mgr.cryptoSuite)
+	if err != nil {
+		t.Fatalf("failed to import key: %s", err)
+	}
+
+	id, err = mgr.CreateSigningIdentity(msp.WithCert([]byte(testCert)))
+	if err != nil {
+		t.Fatalf("Failed when creating identity based on certificate: %s", err)
+	}
+	if err := validateTestIdentity(id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func importPrivateKeyOutOfBand(privateKey []byte, cs core.CryptoSuite) error {
+	_, err := fabricCaUtil.ImportBCCSPKeyFromPEMBytes([]byte(privateKey), cs, false)
+	return err
+}
+
+func validateTestIdentity(id msp.SigningIdentity) error {
+	if id == nil {
+		return errors.New("SigningIdentity is nil")
+	}
+	if string(id.EnrollmentCertificate()) != testCert {
+		return errors.New("Enrollment cert not equal")
+	}
+	if id.Identifier().MSPID == "" {
+		return errors.New("MSPID is missing")
+	}
+	if id.PrivateKey() == nil {
+		return errors.New("private key is missing")
+	}
+	return nil
 }
 
 func createRandomName() string {

@@ -60,7 +60,7 @@ func NewMockIdentityManager(opts ...UsersOption) msp.IdentityManager {
 	for _, param := range opts {
 		err := param(&usersOptions)
 		if err != nil {
-			panic(fmt.Errorf("failed to create IdentityManager: %v", err))
+			panic(fmt.Errorf("failed to create IdentityManager: %s", err))
 		}
 	}
 	if usersOptions.users != nil {
@@ -79,4 +79,9 @@ func (mgr *MockIdentityManager) GetSigningIdentity(id string) (msp.SigningIdenti
 		return nil, msp.ErrUserNotFound
 	}
 	return si, nil
+}
+
+// CreateSigningIdentity creates a signing identity with the given options
+func (mgr *MockIdentityManager) CreateSigningIdentity(opts ...msp.SigningIdentityOption) (msp.SigningIdentity, error) {
+	return nil, errors.New("not implemented")
 }

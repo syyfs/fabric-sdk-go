@@ -18,18 +18,21 @@ import (
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/options"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/context"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
-
 	"github.com/hyperledger/fabric-sdk-go/pkg/fab/events/api"
 	"github.com/hyperledger/fabric-sdk-go/pkg/fab/events/client/dispatcher"
 	clientmocks "github.com/hyperledger/fabric-sdk-go/pkg/fab/events/client/mocks"
 	mockconn "github.com/hyperledger/fabric-sdk-go/pkg/fab/events/client/mocks"
+	"github.com/hyperledger/fabric-sdk-go/pkg/fab/events/client/peerresolver/preferpeer"
 	esdispatcher "github.com/hyperledger/fabric-sdk-go/pkg/fab/events/service/dispatcher"
 	servicemocks "github.com/hyperledger/fabric-sdk-go/pkg/fab/events/service/mocks"
 	fabmocks "github.com/hyperledger/fabric-sdk-go/pkg/fab/mocks"
 	mspmocks "github.com/hyperledger/fabric-sdk-go/pkg/msp/test/mockmsp"
+	"github.com/hyperledger/fabric-sdk-go/pkg/util/test"
 	cb "github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/common"
 	pb "github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/peer"
 	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -37,8 +40,8 @@ const (
 )
 
 var (
-	peer1 = fabmocks.NewMockPeer("peer1", "grpcs://peer1.example.com:7051")
-	peer2 = fabmocks.NewMockPeer("peer2", "grpcs://peer2.example.com:7051")
+	peer1 = clientmocks.NewMockPeer("peer1", "grpcs://peer1.example.com:7051", 100)
+	peer2 = clientmocks.NewMockPeer("peer2", "grpcs://peer2.example.com:7051", 110)
 
 	sourceURL = "localhost:9051"
 )
@@ -51,11 +54,11 @@ func TestConnect(t *testing.T) {
 	)
 
 	eventClient, _, err := newClientWithMockConnAndOpts(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg("mychannel"),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		connectionProvider, filteredClientProvider, []options.Opt{},
 	)
 	if err != nil {
@@ -68,7 +71,7 @@ func TestConnect(t *testing.T) {
 		t.Fatalf("error connecting: %s", err)
 	}
 	if err := eventClient.Connect(); err == nil {
-		t.Fatalf("expecting error connecting since the client is already connected")
+		t.Fatal("expecting error connecting since the client is already connected")
 	} else {
 		t.Logf("Got expected error: %s", err)
 	}
@@ -85,11 +88,11 @@ func TestConnect(t *testing.T) {
 
 func TestFailConnect(t *testing.T) {
 	eventClient, _, err := newClientWithMockConnAndOpts(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg("mychannel"),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		mockconn.NewProviderFactory().Provider(
 			mockconn.NewMockConnection(
 				mockconn.WithLedger(servicemocks.NewMockLedger(servicemocks.FilteredBlockEventFactory, sourceURL)),
@@ -101,17 +104,17 @@ func TestFailConnect(t *testing.T) {
 		t.Fatalf("error creating client: %s", err)
 	}
 	if err := eventClient.Connect(); err == nil {
-		t.Fatalf("expecting error connecting client but got none")
+		t.Fatal("expecting error connecting client but got none")
 	}
 }
 
 func TestCallsOnClosedClient(t *testing.T) {
 	eventClient, _, err := newClientWithMockConn(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg("mychannel"),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		filteredClientProvider,
 		mockconn.WithLedger(servicemocks.NewMockLedger(servicemocks.FilteredBlockEventFactory, sourceURL)),
 	)
@@ -127,19 +130,19 @@ func TestCallsOnClosedClient(t *testing.T) {
 	eventClient.Close()
 
 	if err := eventClient.Connect(); err == nil {
-		t.Fatalf("expecting error connecting to closed channel event client but got none")
+		t.Fatal("expecting error connecting to closed channel event client but got none")
 	}
 
 	if _, _, err := eventClient.RegisterFilteredBlockEvent(); err == nil {
-		t.Fatalf("expecting error registering for block events on closed channel event client but got none")
+		t.Fatal("expecting error registering for block events on closed channel event client but got none")
 	}
 
 	if _, _, err := eventClient.RegisterChaincodeEvent("ccid", "event"); err == nil {
-		t.Fatalf("expecting error registering for chaincode events on closed channel event client but got none")
+		t.Fatal("expecting error registering for chaincode events on closed channel event client but got none")
 	}
 
 	if _, _, err := eventClient.RegisterTxStatusEvent("txid"); err == nil {
-		t.Fatalf("expecting error registering for TX events on closed channel event client but got none")
+		t.Fatal("expecting error registering for TX events on closed channel event client but got none")
 	}
 
 	// Make sure the client doesn't panic when calling unregister on disconnected client
@@ -149,11 +152,11 @@ func TestCallsOnClosedClient(t *testing.T) {
 func TestCloseIfIdle(t *testing.T) {
 	channelID := "mychannel"
 	eventClient, _, err := newClientWithMockConn(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg(channelID),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		clientProvider,
 		mockconn.WithLedger(servicemocks.NewMockLedger(servicemocks.BlockEventFactory, sourceURL)),
 	)
@@ -170,24 +173,24 @@ func TestCloseIfIdle(t *testing.T) {
 	}
 
 	if eventClient.CloseIfIdle() {
-		t.Fatalf("expecting client to not close since there's an outstanding registration")
+		t.Fatal("expecting client to not close since there's an outstanding registration")
 	}
 
 	eventClient.Unregister(reg)
 
 	if !eventClient.CloseIfIdle() {
-		t.Fatalf("expecting client to close since there are no outstanding registrations")
+		t.Fatal("expecting client to close since there are no outstanding registrations")
 	}
 }
 
 func TestInvalidUnregister(t *testing.T) {
 	channelID := "mychannel"
 	eventClient, _, err := newClientWithMockConn(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg(channelID),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		filteredClientProvider,
 		mockconn.WithLedger(servicemocks.NewMockLedger(servicemocks.FilteredBlockEventFactory, sourceURL)),
 	)
@@ -206,11 +209,11 @@ func TestInvalidUnregister(t *testing.T) {
 func TestUnauthorizedBlockEvents(t *testing.T) {
 	channelID := "mychannel"
 	eventClient, _, err := newClientWithMockConn(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg(channelID),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		filteredClientProvider,
 		mockconn.WithLedger(servicemocks.NewMockLedger(servicemocks.FilteredBlockEventFactory, sourceURL)),
 	)
@@ -223,18 +226,18 @@ func TestUnauthorizedBlockEvents(t *testing.T) {
 	defer eventClient.Close()
 
 	if _, _, err := eventClient.RegisterBlockEvent(); err == nil {
-		t.Fatalf("expecting error registering for block events on a filtered client")
+		t.Fatal("expecting error registering for block events on a filtered client")
 	}
 }
 
 func TestBlockEvents(t *testing.T) {
 	channelID := "mychannel"
 	eventClient, conn, err := newClientWithMockConn(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg(channelID),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		clientProvider,
 		mockconn.WithLedger(servicemocks.NewMockLedger(servicemocks.BlockEventFactory, sourceURL)),
 	)
@@ -271,12 +274,12 @@ func checkBlockEvent(t *testing.T, channelID string, conn mockconn.Connection, e
 		select {
 		case _, ok := <-eventch1:
 			if !ok {
-				t.Fatalf("unexpected closed channel")
+				t.Fatal("unexpected closed channel")
 			}
 			numReceived++
 		case _, ok := <-eventch2:
 			if !ok {
-				t.Fatalf("unexpected closed channel")
+				t.Fatal("unexpected closed channel")
 			}
 			numReceived++
 		case <-time.After(2 * time.Second):
@@ -291,11 +294,11 @@ func checkBlockEvent(t *testing.T, channelID string, conn mockconn.Connection, e
 func TestFilteredBlockEvents(t *testing.T) {
 	channelID := "mychannel"
 	eventClient, conn, err := newClientWithMockConn(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg(channelID),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		filteredClientProvider,
 		mockconn.WithLedger(servicemocks.NewMockLedger(servicemocks.FilteredBlockEventFactory, sourceURL)),
 	)
@@ -339,13 +342,13 @@ func checkFilteredBlockEvents(t *testing.T, eventch1 <-chan *fab.FilteredBlockEv
 		select {
 		case fbevent, ok := <-eventch1:
 			if !ok {
-				t.Fatalf("unexpected closed channel")
+				t.Fatal("unexpected closed channel")
 			}
 			checkFbEvent(t, fbevent, channelID)
 			numReceived++
 		case fbevent, ok := <-eventch2:
 			if !ok {
-				t.Fatalf("unexpected closed channel")
+				t.Fatal("unexpected closed channel")
 			}
 			checkFbEvent(t, fbevent, channelID)
 			numReceived++
@@ -360,7 +363,7 @@ func checkFilteredBlockEvents(t *testing.T, eventch1 <-chan *fab.FilteredBlockEv
 
 func checkFbEvent(t *testing.T, fbevent *fab.FilteredBlockEvent, channelID string) {
 	if fbevent.FilteredBlock == nil {
-		t.Fatalf("Expecting filtered block but got nil")
+		t.Fatal("Expecting filtered block but got nil")
 	}
 	if fbevent.FilteredBlock.ChannelId != channelID {
 		t.Fatalf("Expecting channel [%s] but got [%s]", channelID, fbevent.FilteredBlock.ChannelId)
@@ -370,11 +373,11 @@ func checkFbEvent(t *testing.T, fbevent *fab.FilteredBlockEvent, channelID strin
 func TestBlockAndFilteredBlockEvents(t *testing.T) {
 	channelID := "mychannel"
 	eventClient, conn, err := newClientWithMockConn(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg(channelID),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		clientProvider,
 		mockconn.WithLedger(servicemocks.NewMockLedger(servicemocks.BlockEventFactory, sourceURL)),
 	)
@@ -428,14 +431,14 @@ func checkBlockAndFilteredBlockEvents(t *testing.T, channelID string, fbeventch 
 		select {
 		case fbevent, ok := <-fbeventch:
 			if !ok {
-				t.Fatalf("unexpected closed channel")
+				t.Fatal("unexpected closed channel")
 			}
 			numReceived++
 			checkFilteredBlock(t, fbevent.FilteredBlock, channelID, tx1, tx2)
 
 		case _, ok := <-beventch:
 			if !ok {
-				t.Fatalf("unexpected closed channel")
+				t.Fatal("unexpected closed channel")
 			}
 			numReceived++
 
@@ -451,11 +454,11 @@ func checkBlockAndFilteredBlockEvents(t *testing.T, channelID string, fbeventch 
 func TestTxStatusEvents(t *testing.T) {
 	channelID := "mychannel"
 	eventClient, conn, err := newClientWithMockConn(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg(channelID),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		filteredClientProvider,
 		mockconn.WithLedger(servicemocks.NewMockLedger(servicemocks.FilteredBlockEventFactory, sourceURL)),
 	)
@@ -473,7 +476,7 @@ func TestTxStatusEvents(t *testing.T) {
 	txCode2 := pb.TxValidationCode_ENDORSEMENT_POLICY_FAILURE
 
 	if _, _, err1 := eventClient.RegisterTxStatusEvent(""); err1 == nil {
-		t.Fatalf("expecting error registering for TxStatus event without a TX ID but got none")
+		t.Fatal("expecting error registering for TxStatus event without a TX ID but got none")
 	}
 	reg1, _, err := eventClient.RegisterTxStatusEvent(txID1)
 	if err != nil {
@@ -513,14 +516,14 @@ func checkTxStatusEvents(t *testing.T, eventch1 <-chan *fab.TxStatusEvent, event
 		select {
 		case event, ok := <-eventch1:
 			if !ok {
-				t.Fatalf("unexpected closed channel")
+				t.Fatal("unexpected closed channel")
 			} else {
 				checkTxStatusEvent(t, event, txID1, txCode1)
 				numReceived++
 			}
 		case event, ok := <-eventch2:
 			if !ok {
-				t.Fatalf("unexpected closed channel")
+				t.Fatal("unexpected closed channel")
 			} else {
 				checkTxStatusEvent(t, event, txID2, txCode2)
 				numReceived++
@@ -538,11 +541,11 @@ func checkTxStatusEvents(t *testing.T, eventch1 <-chan *fab.TxStatusEvent, event
 func TestCCEvents(t *testing.T) {
 	channelID := "mychannel"
 	eventClient, conn, err := newClientWithMockConn(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg(channelID),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		filteredClientProvider,
 		mockconn.WithLedger(servicemocks.NewMockLedger(servicemocks.FilteredBlockEventFactory, sourceURL)),
 	)
@@ -563,13 +566,13 @@ func TestCCEvents(t *testing.T) {
 	event3 := "event3"
 
 	if _, _, err1 := eventClient.RegisterChaincodeEvent("", ccFilter1); err1 == nil {
-		t.Fatalf("expecting error registering for chaincode events without CC ID but got none")
+		t.Fatal("expecting error registering for chaincode events without CC ID but got none")
 	}
 	if _, _, err1 := eventClient.RegisterChaincodeEvent(ccID1, ""); err1 == nil {
-		t.Fatalf("expecting error registering for chaincode events without event filter but got none")
+		t.Fatal("expecting error registering for chaincode events without event filter but got none")
 	}
 	if _, _, err1 := eventClient.RegisterChaincodeEvent(ccID1, ".(xxx"); err1 == nil {
-		t.Fatalf("expecting error registering for chaincode events with invalid (regular expression) event filter but got none")
+		t.Fatal("expecting error registering for chaincode events with invalid (regular expression) event filter but got none")
 	}
 	reg1, _, err := eventClient.RegisterChaincodeEvent(ccID1, ccFilter1)
 	if err != nil {
@@ -611,14 +614,14 @@ func checkCCEvents(t *testing.T, eventch1 <-chan *fab.CCEvent, eventch2 <-chan *
 		select {
 		case event, ok := <-eventch1:
 			if !ok {
-				t.Fatalf("unexpected closed channel")
+				t.Fatal("unexpected closed channel")
 			} else {
 				checkCCEvent(t, event, ccID1, nil, event1)
 				numReceived++
 			}
 		case event, ok := <-eventch2:
 			if !ok {
-				t.Fatalf("unexpected closed channel")
+				t.Fatal("unexpected closed channel")
 			} else {
 				checkCCEvent(t, event, ccID2, nil, event2, event3)
 				numReceived++
@@ -739,11 +742,11 @@ func TestConcurrentEvents(t *testing.T) {
 	ccFilter := "event.*"
 
 	eventClient, conn, err := newClientWithMockConnAndOpts(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg("mychannel"),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		nil, clientProvider,
 		[]options.Opt{
 			esdispatcher.WithEventConsumerBufferSize(uint(numEvents) * 4),
@@ -772,7 +775,7 @@ func TestConcurrentEvents(t *testing.T) {
 
 	ccreg, cceventch, err := eventClient.RegisterChaincodeEvent(ccID, ccFilter)
 	if err != nil {
-		t.Fatalf("error registering for chaincode events")
+		t.Fatal("error registering for chaincode events")
 	}
 	defer eventClient.Unregister(ccreg)
 
@@ -824,7 +827,7 @@ func checkConcurrentEvents(blockTestErr chan error, t *testing.T, fblockTestErr 
 
 func checkIfAllEventsRecv(blockTestDone bool, fblockTestDone bool, ccTestDone bool, txStatusTestDone bool) bool {
 	if blockTestDone && fblockTestDone && ccTestDone && txStatusTestDone {
-		fmt.Printf("All tests completed successfully\n")
+		test.Logf("All tests completed successfully")
 		return true
 	}
 	return false
@@ -860,16 +863,16 @@ func checkTxStatusDone(err error, t *testing.T) bool {
 
 func checkEventsAreDone(t *testing.T, blockTestDone, fblockTestDone, ccTestDone, txStatusTestDone bool) {
 	if !blockTestDone {
-		t.Fatalf("Timed out waiting for block test")
+		t.Fatal("Timed out waiting for block test")
 	}
 	if !fblockTestDone {
-		t.Fatalf("Timed out waiting for filtered block test")
+		t.Fatal("Timed out waiting for filtered block test")
 	}
 	if !ccTestDone {
-		t.Fatalf("Timed out waiting for chaincode test")
+		t.Fatal("Timed out waiting for chaincode test")
 	}
 	if !txStatusTestDone {
-		t.Fatalf("Timed out waiting for TxStatus test")
+		t.Fatal("Timed out waiting for TxStatus test")
 	}
 }
 
@@ -880,7 +883,7 @@ func listenBlockEvents(channelID string, eventch <-chan *fab.BlockEvent, expecte
 		select {
 		case _, ok := <-eventch:
 			if !ok {
-				fmt.Printf("Block events channel was closed \n")
+				test.Logf("Block events channel was closed")
 				return
 			}
 			numReceived++
@@ -888,7 +891,7 @@ func listenBlockEvents(channelID string, eventch <-chan *fab.BlockEvent, expecte
 			if numReceived != expected {
 				errch <- errors.Errorf("Expected [%d] events but received [%d]", expected, numReceived)
 			} else {
-				fmt.Printf("Received %d block events\n", numReceived)
+				test.Logf("Received %d block events", numReceived)
 				errch <- nil
 			}
 			return
@@ -903,7 +906,7 @@ func listenFilteredBlockEvents(channelID string, eventch <-chan *fab.FilteredBlo
 		select {
 		case fbevent, ok := <-eventch:
 			if !ok {
-				fmt.Printf("Filtered block events channel was closed \n")
+				test.Logf("Filtered block events channel was closed")
 				return
 			}
 			if fbevent.FilteredBlock == nil {
@@ -919,7 +922,7 @@ func listenFilteredBlockEvents(channelID string, eventch <-chan *fab.FilteredBlo
 			if numReceived != expected {
 				errch <- errors.Errorf("Expected [%d] events but received [%d]", expected, numReceived)
 			} else {
-				fmt.Printf("Received %d filtered block events\n", numReceived)
+				test.Logf("Received %d filtered block events", numReceived)
 				errch <- nil
 			}
 			return
@@ -935,7 +938,7 @@ func listenChaincodeEvents(channelID string, eventch <-chan *fab.CCEvent, expect
 		select {
 		case event, ok := <-eventch:
 			if !ok {
-				fmt.Printf("CC events channel was closed \n")
+				test.Logf("CC events channel was closed")
 				return
 			}
 			if event.BlockNumber > 0 && event.BlockNumber <= lastBlockNum {
@@ -947,7 +950,7 @@ func listenChaincodeEvents(channelID string, eventch <-chan *fab.CCEvent, expect
 			if numReceived != expected {
 				errch <- errors.Errorf("Expected [%d] events but received [%d]", expected, numReceived)
 			} else {
-				fmt.Printf("Received %d CC events\n", numReceived)
+				test.Logf("Received %d CC events", numReceived)
 				errch <- nil
 			}
 			return
@@ -1019,11 +1022,11 @@ func testConnect(t *testing.T, maxConnectAttempts uint, expectedOutcome mockconn
 	cp := mockconn.NewProviderFactory()
 
 	eventClient, _, err := newClientWithMockConnAndOpts(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg("mychannel"),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		cp.FlakeyProvider(connAttemptResult, mockconn.WithLedger(servicemocks.NewMockLedger(servicemocks.BlockEventFactory, sourceURL))),
 		clientProvider,
 		[]options.Opt{
@@ -1056,11 +1059,11 @@ func testReconnect(t *testing.T, reconnect bool, maxReconnectAttempts uint, expe
 	ledger := servicemocks.NewMockLedger(servicemocks.BlockEventFactory, sourceURL)
 
 	eventClient, _, err := newClientWithMockConnAndOpts(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg("mychannel"),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		cp.FlakeyProvider(connAttemptResult, mockconn.WithLedger(ledger)),
 		clientProvider,
 		[]options.Opt{
@@ -1113,11 +1116,11 @@ func testReconnectRegistration(t *testing.T, expectedBlockEvents mockconn.NumBlo
 	cp := mockconn.NewProviderFactory()
 
 	eventClient, _, err := newClientWithMockConnAndOpts(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg("mychannel"),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		cp.FlakeyProvider(connectResults, mockconn.WithLedger(ledger)),
 		clientProvider,
 		[]options.Opt{
@@ -1196,12 +1199,12 @@ func checkEvents(numCh chan mockconn.Received, t *testing.T, expectedBlockEvents
 	select {
 	case received, ok := <-numCh:
 		if !ok {
-			t.Fatalf("connection closed prematurely")
+			t.Fatal("connection closed prematurely")
 		} else {
 			eventsReceived = received
 		}
 	case <-time.After(20 * time.Second):
-		t.Fatalf("timed out waiting for events")
+		t.Fatal("timed out waiting for events")
 	}
 	if eventsReceived.NumBlock != expectedBlockEvents {
 		t.Fatalf("Expecting to receive [%d] block events but received [%d]", expectedBlockEvents, eventsReceived.NumBlock)
@@ -1216,15 +1219,15 @@ func listenConnection(eventch chan *dispatcher.ConnectionEvent, outcome chan moc
 
 	for {
 		e, ok := <-eventch
-		fmt.Printf("listenConnection - got event [%v] - ok=[%v]\n", e, ok)
+		test.Logf("listenConnection - got event [%+v] - ok=[%t]", e, ok)
 		if !ok {
-			fmt.Printf("listenConnection - Returning terminated outcome\n")
+			test.Logf("listenConnection - Returning terminated outcome")
 			outcome <- mockconn.ClosedOutcome
 			break
 		}
 		if e.Connected {
 			if state == Disconnected {
-				fmt.Printf("listenConnection - Returning reconnected outcome\n")
+				test.Logf("listenConnection - Returning reconnected outcome")
 				outcome <- mockconn.ReconnectedOutcome
 			}
 			state = Connected
@@ -1267,46 +1270,47 @@ func listenEvents(blockch <-chan *fab.BlockEvent, ccch <-chan *fab.CCEvent, wait
 	}
 }
 
-type ClientProvider func(context context.Client, chConfig fab.ChannelCfg, connectionProvider api.ConnectionProvider, opts []options.Opt) (*Client, error)
+type ClientProvider func(context context.Client, chConfig fab.ChannelCfg, discoveryService fab.DiscoveryService, connectionProvider api.ConnectionProvider, opts []options.Opt) (*Client, error)
 
-var clientProvider = func(context context.Client, chConfig fab.ChannelCfg, connectionProvider api.ConnectionProvider, opts []options.Opt) (*Client, error) {
+var clientProvider = func(context context.Client, chConfig fab.ChannelCfg, discoveryService fab.DiscoveryService, connectionProvider api.ConnectionProvider, opts []options.Opt) (*Client, error) {
 	opts = append(opts, WithBlockEvents())
-	return newClient(context, chConfig, connectionProvider, opts,
+	return newClient(context, chConfig, discoveryService, connectionProvider, opts,
 		func() error {
-			fmt.Printf("AfterConnect called")
+			test.Logf("AfterConnect called")
 			return nil
 		},
 		func() error {
-			fmt.Printf("BeforeReconnect called")
+			test.Logf("BeforeReconnect called")
 			return nil
 		})
 }
 
-var failAfterConnectClientProvider = func(context context.Client, chConfig fab.ChannelCfg, connectionProvider api.ConnectionProvider, opts []options.Opt) (*Client, error) {
+var failAfterConnectClientProvider = func(context context.Client, chConfig fab.ChannelCfg, discoveryService fab.DiscoveryService, connectionProvider api.ConnectionProvider, opts []options.Opt) (*Client, error) {
 	opts = append(opts, WithBlockEvents())
-	return newClient(context, chConfig, connectionProvider, opts,
+	return newClient(context, chConfig, discoveryService, connectionProvider, opts,
 		func() error {
 			return errors.New("simulated failure after connect")
 		},
 		nil)
 }
 
-var filteredClientProvider = func(context context.Client, chConfig fab.ChannelCfg, connectionProvider api.ConnectionProvider, opts []options.Opt) (*Client, error) {
-	return newClient(context, chConfig, connectionProvider, opts,
+var filteredClientProvider = func(context context.Client, chConfig fab.ChannelCfg, discoveryService fab.DiscoveryService, connectionProvider api.ConnectionProvider, opts []options.Opt) (*Client, error) {
+	return newClient(context, chConfig, discoveryService, connectionProvider, opts,
 		func() error {
-			fmt.Printf("AfterConnect called")
+			test.Logf("AfterConnect called")
 			return nil
 		},
 		func() error {
-			fmt.Printf("BeforeReconnect called")
+			test.Logf("BeforeReconnect called")
 			return nil
 		})
 }
 
-func newClient(context context.Client, chConfig fab.ChannelCfg, connectionProvider api.ConnectionProvider, opts []options.Opt, afterConnect handler, beforeReconnect handler) (*Client, error) {
+func newClient(context context.Client, chConfig fab.ChannelCfg, discoveryService fab.DiscoveryService, connectionProvider api.ConnectionProvider, opts []options.Opt, afterConnect handler, beforeReconnect handler) (*Client, error) {
 	client := New(
 		dispatcher.New(
 			context, chConfig,
+			discoveryService,
 			connectionProvider,
 			opts...,
 		),
@@ -1319,25 +1323,25 @@ func newClient(context context.Client, chConfig fab.ChannelCfg, connectionProvid
 	return client, err
 }
 
-func newClientWithMockConn(context context.Client, chConfig fab.ChannelCfg, clientProvider ClientProvider, connOpts ...mockconn.Opt) (*Client, mockconn.Connection, error) {
+func newClientWithMockConn(context context.Client, chConfig fab.ChannelCfg, discovery fab.DiscoveryService, clientProvider ClientProvider, connOpts ...mockconn.Opt) (*Client, mockconn.Connection, error) {
 	conn := mockconn.NewMockConnection(connOpts...)
-	client, _, err := newClientWithMockConnAndOpts(context, chConfig, mockconn.NewProviderFactory().Provider(conn), clientProvider, []options.Opt{})
+	client, _, err := newClientWithMockConnAndOpts(context, chConfig, discovery, mockconn.NewProviderFactory().Provider(conn), clientProvider, []options.Opt{})
 	return client, conn, err
 }
 
-func newClientWithMockConnAndOpts(context context.Client, chConfig fab.ChannelCfg, connectionProvider api.ConnectionProvider, clientProvider ClientProvider, opts []options.Opt, connOpts ...mockconn.Opt) (*Client, mockconn.Connection, error) {
+func newClientWithMockConnAndOpts(context context.Client, chConfig fab.ChannelCfg, discovery fab.DiscoveryService, connectionProvider api.ConnectionProvider, clientProvider ClientProvider, opts []options.Opt, connOpts ...mockconn.Opt) (*Client, mockconn.Connection, error) {
 	var conn mockconn.Connection
 	if connectionProvider == nil {
 		conn = mockconn.NewMockConnection(connOpts...)
 		connectionProvider = mockconn.NewProviderFactory().Provider(conn)
 	}
-	client, err := clientProvider(context, chConfig, connectionProvider, opts)
+	client, err := clientProvider(context, chConfig, discovery, connectionProvider, opts)
 	return client, conn, err
 }
 
 func checkFilteredBlock(t *testing.T, fblock *pb.FilteredBlock, expectedChannelID string, expectedFilteredTxs ...*pb.FilteredTransaction) {
 	if fblock == nil {
-		t.Fatalf("Expecting filtered block but got nil")
+		t.Fatal("Expecting filtered block but got nil")
 	}
 	if fblock.ChannelId != expectedChannelID {
 		t.Fatalf("Expecting channel [%s] but got [%s]", expectedChannelID, fblock.ChannelId)
@@ -1390,4 +1394,317 @@ func checkCCEvent(t *testing.T, event *fab.CCEvent, expectedCCID string, expecte
 	if !found {
 		t.Fatalf("expecting one of [%v] but received [%s]", expectedEventNames, event.EventName)
 	}
+}
+
+func TestDisconnectIfBlockHeightLags(t *testing.T) {
+	p1 := clientmocks.NewMockPeer("peer1", "grpcs://peer1.example.com:7051", 4)
+	p2 := clientmocks.NewMockPeer("peer2", "grpcs://peer2.example.com:7051", 1)
+	p3 := clientmocks.NewMockPeer("peer3", "grpcs://peer3.example.com:7051", 1)
+
+	connectch := make(chan *dispatcher.ConnectionEvent)
+
+	conn := clientmocks.NewMockConnection(
+		clientmocks.WithLedger(servicemocks.NewMockLedger(servicemocks.FilteredBlockEventFactory, sourceURL)),
+	)
+	connectionProvider := clientmocks.NewProviderFactory().Provider(conn)
+
+	channelID := "mychannel"
+
+	ctx := fabmocks.NewMockContext(
+		mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
+	)
+
+	ctx.SetEndpointConfig(clientmocks.NewMockConfig(channelID,
+		fab.EventServicePolicy{
+			ResolverStrategy:                 fab.MinBlockHeightStrategy,
+			Balancer:                         fab.RoundRobin,
+			BlockHeightLagThreshold:          2,
+			ReconnectBlockHeightLagThreshold: 3,
+			PeerMonitorPeriod:                250 * time.Millisecond,
+		},
+	))
+
+	eventClient, _, err := newClientWithMockConnAndOpts(
+		ctx,
+		fabmocks.NewMockChannelCfg(channelID),
+		clientmocks.NewDiscoveryService(p1, p2, p3),
+		connectionProvider, filteredClientProvider,
+		[]options.Opt{
+			esdispatcher.WithEventConsumerTimeout(3 * time.Second),
+			WithMaxConnectAttempts(1),
+			WithTimeBetweenConnectAttempts(time.Millisecond),
+			WithConnectionEvent(connectch),
+			WithResponseTimeout(2 * time.Second),
+		},
+	)
+	if err != nil {
+		t.Fatalf("error creating channel event client: %s", err)
+	}
+	if err := eventClient.Connect(); err != nil {
+		t.Fatalf("error connecting channel event client: %s", err)
+	}
+	defer eventClient.Close()
+
+	outcomech := make(chan mockconn.Outcome)
+	go listenConnection(connectch, outcomech)
+
+	conn.Ledger().NewFilteredBlock(channelID, servicemocks.NewFilteredTx("tx1", pb.TxValidationCode_VALID))
+	conn.Ledger().NewFilteredBlock(channelID, servicemocks.NewFilteredTx("tx2", pb.TxValidationCode_VALID))
+	conn.Ledger().NewFilteredBlock(channelID, servicemocks.NewFilteredTx("tx3", pb.TxValidationCode_VALID))
+	conn.Ledger().NewFilteredBlock(channelID, servicemocks.NewFilteredTx("tx4", pb.TxValidationCode_VALID))
+	conn.Ledger().NewFilteredBlock(channelID, servicemocks.NewFilteredTx("tx5", pb.TxValidationCode_VALID))
+
+	// Set the block height of another peer to be greater than the disconnect threshold
+	// so that the event client can reconnect to another peer
+	p2.SetBlockHeight(9)
+
+	select {
+	case outcome := <-outcomech:
+		assert.Equal(t, mockconn.ReconnectedOutcome, outcome)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Timed out waiting for reconnect")
+	}
+}
+
+// TestPreferLocalOrgConnection tests the scenario where an org wishes to connect to it's own peers
+// if they are above the block height lag threshold but, if they fall below the threshold, the
+// connection should be made to another org's peer. Once the local org's peers have caught up in
+// block height, the connection to the local peer should be re-established.
+func TestPreferLocalOrgConnection(t *testing.T) {
+	channelID := "testchannel"
+	org1MSP := "Org1MSP"
+	org2MSP := "Org2MSP"
+	blockHeightLagThreshold := 2
+
+	p1O1 := clientmocks.NewMockStatefulPeer("p1_o1", "peer1.org1.com:7051", clientmocks.WithMSP(org1MSP), clientmocks.WithBlockHeight(4))
+	p2O1 := clientmocks.NewMockStatefulPeer("p2_o1", "peer2.org1.com:7051", clientmocks.WithMSP(org1MSP), clientmocks.WithBlockHeight(3))
+	p1O2 := clientmocks.NewMockStatefulPeer("p1_o2", "peer1.org2.com:7051", clientmocks.WithMSP(org2MSP), clientmocks.WithBlockHeight(10))
+	p2O2 := clientmocks.NewMockStatefulPeer("p2_o2", "peer1.org2.com:7051", clientmocks.WithMSP(org2MSP), clientmocks.WithBlockHeight(11))
+
+	connectch := make(chan *dispatcher.ConnectionEvent)
+
+	conn := clientmocks.NewMockConnection(
+		clientmocks.WithLedger(servicemocks.NewMockLedger(servicemocks.FilteredBlockEventFactory, sourceURL)),
+	)
+	connectionProvider := clientmocks.NewProviderFactory().Provider(conn)
+
+	ctx := fabmocks.NewMockContext(
+		mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
+	)
+	ctx.SetEndpointConfig(clientmocks.NewMockConfig(channelID,
+		fab.EventServicePolicy{
+			ResolverStrategy:                 fab.PreferOrgStrategy,
+			Balancer:                         fab.RoundRobin,
+			BlockHeightLagThreshold:          blockHeightLagThreshold,
+			ReconnectBlockHeightLagThreshold: 3,
+			PeerMonitorPeriod:                250 * time.Millisecond,
+		},
+	))
+
+	eventClient, _, err := newClientWithMockConnAndOpts(
+		ctx,
+		fabmocks.NewMockChannelCfg(channelID),
+		clientmocks.NewDiscoveryService(p1O1, p2O1, p1O2, p2O2),
+		connectionProvider, filteredClientProvider,
+		[]options.Opt{
+			esdispatcher.WithEventConsumerTimeout(3 * time.Second),
+			WithMaxConnectAttempts(1),
+			WithTimeBetweenConnectAttempts(time.Millisecond),
+			WithConnectionEvent(connectch),
+			WithResponseTimeout(2 * time.Second),
+		},
+	)
+	require.NoErrorf(t, err, "error creating channel event client")
+	err = eventClient.Connect()
+	require.NoErrorf(t, err, "errorconnecting channel event client")
+	defer eventClient.Close()
+
+	connectedPeer := eventClient.Dispatcher().(*dispatcher.Dispatcher).ConnectedPeer()
+	assert.Equal(t, org2MSP, connectedPeer.MSPID())
+
+	outcomech := make(chan mockconn.Outcome)
+	go listenConnection(connectch, outcomech)
+
+	conn.Ledger().NewFilteredBlock(channelID, servicemocks.NewFilteredTx("tx1", pb.TxValidationCode_VALID))
+	conn.Ledger().NewFilteredBlock(channelID, servicemocks.NewFilteredTx("tx2", pb.TxValidationCode_VALID))
+	conn.Ledger().NewFilteredBlock(channelID, servicemocks.NewFilteredTx("tx3", pb.TxValidationCode_VALID))
+	conn.Ledger().NewFilteredBlock(channelID, servicemocks.NewFilteredTx("tx4", pb.TxValidationCode_VALID))
+	conn.Ledger().NewFilteredBlock(channelID, servicemocks.NewFilteredTx("tx5", pb.TxValidationCode_VALID))
+
+	// Set the block height of the local peer to be greater than the disconnect threshold
+	// so that the event client can reconnect to the local peer
+	p2O1.SetBlockHeight(9)
+
+	select {
+	case outcome := <-outcomech:
+		assert.Equal(t, mockconn.ReconnectedOutcome, outcome)
+		connectedPeer := eventClient.Dispatcher().(*dispatcher.Dispatcher).ConnectedPeer()
+		assert.Equal(t, org1MSP, connectedPeer.MSPID())
+	case <-time.After(3 * time.Second):
+		t.Fatal("Timed out waiting for reconnect")
+	}
+}
+
+// TestPreferLocalPeersConnection tests the scenario where an org wishes to connect to one of a list of preferred peers
+// if they are above the block height lag threshold but, if they fall below the threshold, the
+// connection should be made to another peer. Once the preferred peers have caught up in
+// block height, the connection to one of the preferred peers should be re-established.
+func TestPreferLocalPeersConnection(t *testing.T) {
+	channelID := "testchannel"
+	org1MSP := "Org1MSP"
+	org2MSP := "Org2MSP"
+	blockHeightLagThreshold := 2
+
+	p1O1 := clientmocks.NewMockStatefulPeer("p1_o1", "peer1.org1.com:7051", clientmocks.WithMSP(org1MSP), clientmocks.WithBlockHeight(4))
+	p2O1 := clientmocks.NewMockStatefulPeer("p2_o1", "peer2.org1.com:7051", clientmocks.WithMSP(org1MSP), clientmocks.WithBlockHeight(3))
+	p1O2 := clientmocks.NewMockStatefulPeer("p1_o2", "peer1.org2.com:7051", clientmocks.WithMSP(org2MSP), clientmocks.WithBlockHeight(10))
+	p2O2 := clientmocks.NewMockStatefulPeer("p2_o2", "peer1.org2.com:7051", clientmocks.WithMSP(org2MSP), clientmocks.WithBlockHeight(11))
+
+	connectch := make(chan *dispatcher.ConnectionEvent)
+
+	conn := clientmocks.NewMockConnection(
+		clientmocks.WithLedger(servicemocks.NewMockLedger(servicemocks.FilteredBlockEventFactory, sourceURL)),
+	)
+	connectionProvider := clientmocks.NewProviderFactory().Provider(conn)
+
+	ctx := fabmocks.NewMockContext(
+		mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
+	)
+
+	ctx.SetEndpointConfig(clientmocks.NewMockConfig(channelID,
+		fab.EventServicePolicy{
+			ResolverStrategy:                 fab.PreferOrgStrategy,
+			Balancer:                         fab.RoundRobin,
+			BlockHeightLagThreshold:          blockHeightLagThreshold,
+			ReconnectBlockHeightLagThreshold: 3,
+			PeerMonitorPeriod:                250 * time.Millisecond,
+		},
+	))
+
+	eventClient, _, err := newClientWithMockConnAndOpts(
+		ctx,
+		fabmocks.NewMockChannelCfg(channelID),
+		clientmocks.NewDiscoveryService(p1O1, p2O1, p1O2, p2O2),
+		connectionProvider, filteredClientProvider,
+		[]options.Opt{
+			esdispatcher.WithEventConsumerTimeout(3 * time.Second),
+			WithMaxConnectAttempts(1),
+			WithTimeBetweenConnectAttempts(time.Millisecond),
+			WithConnectionEvent(connectch),
+			WithResponseTimeout(2 * time.Second),
+			dispatcher.WithPeerResolver(preferpeer.NewResolver(p1O1.URL(), p2O1.URL())),
+		},
+	)
+	require.NoErrorf(t, err, "error creating channel event client")
+	err = eventClient.Connect()
+	require.NoErrorf(t, err, "errorconnecting channel event client")
+	defer eventClient.Close()
+
+	connectedPeer := eventClient.Dispatcher().(*dispatcher.Dispatcher).ConnectedPeer()
+	assert.Equal(t, org2MSP, connectedPeer.MSPID())
+
+	outcomech := make(chan mockconn.Outcome)
+	go listenConnection(connectch, outcomech)
+
+	conn.Ledger().NewFilteredBlock(channelID, servicemocks.NewFilteredTx("tx1", pb.TxValidationCode_VALID))
+	conn.Ledger().NewFilteredBlock(channelID, servicemocks.NewFilteredTx("tx2", pb.TxValidationCode_VALID))
+	conn.Ledger().NewFilteredBlock(channelID, servicemocks.NewFilteredTx("tx3", pb.TxValidationCode_VALID))
+	conn.Ledger().NewFilteredBlock(channelID, servicemocks.NewFilteredTx("tx4", pb.TxValidationCode_VALID))
+	conn.Ledger().NewFilteredBlock(channelID, servicemocks.NewFilteredTx("tx5", pb.TxValidationCode_VALID))
+
+	// Set the block height of the local peer to be greater than the disconnect threshold
+	// so that the event client can reconnect to the local peer
+	p2O1.SetBlockHeight(9)
+
+	select {
+	case outcome := <-outcomech:
+		assert.Equal(t, mockconn.ReconnectedOutcome, outcome)
+		connectedPeer := eventClient.Dispatcher().(*dispatcher.Dispatcher).ConnectedPeer()
+		assert.Equal(t, org1MSP, connectedPeer.MSPID())
+	case <-time.After(3 * time.Second):
+		t.Fatal("Timed out waiting for reconnect")
+	}
+}
+
+func TestTransferRegistrations(t *testing.T) {
+	// Tests the scenario where all event registrations are transferred to another event client.
+	t.Run("Transfer", func(t *testing.T) {
+		testTransferRegistrations(t, func(client *Client) (fab.EventSnapshot, error) {
+			return client.TransferRegistrations(false)
+		})
+	})
+
+	// Tests the scenario where one event client is stopped and all
+	// of the event registrations are transferred to another event client.
+	t.Run("TransferAndClose", func(t *testing.T) {
+		testTransferRegistrations(t, func(client *Client) (fab.EventSnapshot, error) {
+			return client.TransferRegistrations(true)
+		})
+	})
+}
+
+type transferFunc func(client *Client) (fab.EventSnapshot, error)
+
+// TestTransferRegistrations tests the scenario where one event client is stopped and all
+// of the event registrations are transferred to another event client.
+func testTransferRegistrations(t *testing.T, transferFunc transferFunc) {
+	channelID := "mychannel"
+	eventClient1, conn1, err := newClientWithMockConn(
+		fabmocks.NewMockContext(
+			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
+		),
+		fabmocks.NewMockChannelCfg(channelID),
+		clientmocks.NewDiscoveryService(peer1, peer2),
+		clientProvider,
+		mockconn.WithLedger(servicemocks.NewMockLedger(servicemocks.BlockEventFactory, sourceURL)),
+	)
+	require.NoErrorf(t, err, "error creating channel event client")
+
+	err = eventClient1.Connect()
+	require.NoErrorf(t, err, "error connecting channel event client")
+
+	breg, beventch, err := eventClient1.RegisterBlockEvent()
+	require.NoErrorf(t, err, "error registering for block events")
+
+	conn1.Ledger().NewBlock(channelID,
+		servicemocks.NewTransaction("txID", pb.TxValidationCode_VALID, cb.HeaderType_ENDORSER_TRANSACTION),
+	)
+
+	select {
+	case <-beventch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for block event")
+	}
+
+	snapshot, err := transferFunc(eventClient1)
+	require.NoErrorf(t, err, "error transferring snapshot")
+
+	eventClient2, conn2, err := newClientWithMockConnAndOpts(
+		fabmocks.NewMockContext(
+			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
+		),
+		fabmocks.NewMockChannelCfg("mychannel"),
+		clientmocks.NewDiscoveryService(peer1, peer2),
+		nil, clientProvider,
+		[]options.Opt{
+			esdispatcher.WithSnapshot(snapshot),
+		},
+		mockconn.WithLedger(servicemocks.NewMockLedger(servicemocks.BlockEventFactory, sourceURL)),
+	)
+	require.NoErrorf(t, err, "error creating channel event client")
+
+	err = eventClient2.Connect()
+	require.NoErrorf(t, err, "error connecting channel event client")
+
+	conn2.Ledger().NewBlock(channelID,
+		servicemocks.NewTransaction("txID", pb.TxValidationCode_VALID, cb.HeaderType_ENDORSER_TRANSACTION),
+	)
+
+	select {
+	case <-beventch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for block event")
+	}
+
+	eventClient2.Unregister(breg)
 }

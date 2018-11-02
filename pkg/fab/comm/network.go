@@ -7,23 +7,21 @@ SPDX-License-Identifier: Apache-2.0
 package comm
 
 import (
-	"github.com/hyperledger/fabric-sdk-go/pkg/common/errors/status"
+	"strings"
+
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
 	"github.com/pkg/errors"
 )
 
-// NetworkPeerConfigFromURL fetches the peer configuration based on a URL.
-func NetworkPeerConfigFromURL(cfg fab.EndpointConfig, url string) (*fab.NetworkPeer, error) {
-	peerCfg, err := cfg.PeerConfig(url)
-	if err != nil {
-		return nil, errors.WithMessage(err, "peer not found")
+// NetworkPeerConfig fetches the peer configuration based on a key (name or URL).
+func NetworkPeerConfig(cfg fab.EndpointConfig, key string) (*fab.NetworkPeer, error) {
+	peerCfg, ok := cfg.PeerConfig(key)
+	if !ok {
+		return nil, errors.Errorf("peer [%s] not found", key)
 	}
 
 	// find MSP ID
-	networkPeers, err := cfg.NetworkPeers()
-	if err != nil {
-		return nil, errors.WithMessage(err, "unable to load network peer config")
-	}
+	networkPeers := cfg.NetworkPeers()
 
 	var mspID string
 	for _, peer := range networkPeers {
@@ -43,25 +41,15 @@ func NetworkPeerConfigFromURL(cfg fab.EndpointConfig, url string) (*fab.NetworkP
 
 // SearchPeerConfigFromURL searches for the peer configuration based on a URL.
 func SearchPeerConfigFromURL(cfg fab.EndpointConfig, url string) (*fab.PeerConfig, error) {
-	peerCfg, err := cfg.PeerConfig(url)
+	peerCfg, ok := cfg.PeerConfig(url)
 
-	if peerCfg != nil {
+	if ok {
 		return peerCfg, nil
 	}
 
-	if err != nil {
-		s, ok := status.FromError(err)
-		if !ok || s.Code != status.NoMatchingPeerEntity.ToInt32() {
-			return nil, errors.Wrapf(err, "unable to get peer config from [%s]", url)
-		}
-	}
 	//If the given url is already parsed URL through entity matcher, then 'cfg.PeerConfig()'
 	//may return NoMatchingPeerEntity error. So retry with network peer URLs
-	networkPeers, err := cfg.NetworkPeers()
-	if err != nil {
-		return nil, errors.WithMessage(err, "unable to load network peer config")
-	}
-
+	networkPeers := cfg.NetworkPeers()
 	for _, peer := range networkPeers {
 		if peer.URL == url {
 			return &peer.PeerConfig, nil
@@ -69,4 +57,20 @@ func SearchPeerConfigFromURL(cfg fab.EndpointConfig, url string) (*fab.PeerConfi
 	}
 
 	return nil, errors.Errorf("unable to get peerconfig for given url : %s", url)
+}
+
+// MSPID returns the MSP ID for the requested organization
+func MSPID(cfg fab.EndpointConfig, org string) (string, bool) {
+	networkConfig := cfg.NetworkConfig()
+	//check for nil since any endpointconfig implementation can be passed here
+	if networkConfig == nil {
+		return "", false
+	}
+	// viper lowercases all key maps, org is lower case
+	mspID := networkConfig.Organizations[strings.ToLower(org)].MSPID
+	if mspID == "" {
+		return "", false
+	}
+
+	return mspID, true
 }

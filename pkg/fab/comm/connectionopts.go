@@ -10,7 +10,6 @@ import (
 	"crypto/x509"
 	"time"
 
-	"github.com/hyperledger/fabric-sdk-go/pkg/common/errors/status"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/options"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
 	"github.com/spf13/cast"
@@ -97,7 +96,7 @@ func (p *params) SetCertificate(value *x509.Certificate) {
 	if value != nil {
 		logger.Debugf("setting certificate [subject: %s, serial: %s]", value.Subject, value.SerialNumber)
 	} else {
-		logger.Debugf("setting nil certificate")
+		logger.Debug("setting nil certificate")
 	}
 	p.certificate = value
 }
@@ -147,27 +146,19 @@ type connectTimeoutSetter interface {
 }
 
 // OptsFromPeerConfig returns a set of connection options from the given peer config
-func OptsFromPeerConfig(peerCfg *fab.PeerConfig) ([]options.Opt, error) {
-	certificate, err := peerCfg.TLSCACerts.TLSCert()
-	if err != nil {
-		//Ignore empty cert errors,
-		errStatus, ok := err.(*status.Status)
-		if !ok || errStatus.Code != status.EmptyCert.ToInt32() {
-			return nil, err
-		}
-	}
+func OptsFromPeerConfig(peerCfg *fab.PeerConfig) []options.Opt {
 
 	opts := []options.Opt{
 		WithHostOverride(getServerNameOverride(peerCfg)),
 		WithFailFast(getFailFast(peerCfg)),
 		WithKeepAliveParams(getKeepAliveOptions(peerCfg)),
-		WithCertificate(certificate),
+		WithCertificate(peerCfg.TLSCACert),
 	}
 	if isInsecureAllowed(peerCfg) {
 		opts = append(opts, WithInsecure())
 	}
 
-	return opts, nil
+	return opts
 }
 
 func getServerNameOverride(peerCfg *fab.PeerConfig) string {

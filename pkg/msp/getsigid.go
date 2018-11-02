@@ -8,16 +8,13 @@ package msp
 
 import (
 	"fmt"
-	"io/ioutil"
-	"os"
 	"strings"
-
-	"github.com/hyperledger/fabric-sdk-go/pkg/core/config/cryptoutil"
 
 	fabricCaUtil "github.com/hyperledger/fabric-sdk-go/internal/github.com/hyperledger/fabric-ca/util"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/core"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/msp"
-	"github.com/hyperledger/fabric-sdk-go/pkg/util/pathvar"
+	"github.com/hyperledger/fabric-sdk-go/pkg/core/config/cryptoutil"
+	"github.com/hyperledger/fabric-sdk-go/pkg/fab/comm"
 	"github.com/pkg/errors"
 )
 
@@ -69,6 +66,42 @@ func (mgr *IdentityManager) GetSigningIdentity(id string) (msp.SigningIdentity, 
 	return user, nil
 }
 
+// CreateSigningIdentity creates a signing identity with the given options
+func (mgr *IdentityManager) CreateSigningIdentity(opts ...msp.SigningIdentityOption) (msp.SigningIdentity, error) {
+	opt := msp.IdentityOption{}
+	for _, param := range opts {
+		err := param(&opt)
+		if err != nil {
+			return nil, errors.WithMessage(err, "failed to create identity")
+		}
+	}
+	if opt.Cert == nil {
+		return nil, errors.New("missing certificate")
+	}
+	var privateKey core.Key
+	if opt.PrivateKey == nil {
+		pubKey, err := cryptoutil.GetPublicKeyFromCert(opt.Cert, mgr.cryptoSuite)
+		if err != nil {
+			return nil, errors.WithMessage(err, "fetching public key from cert failed")
+		}
+		privateKey, err = mgr.cryptoSuite.GetKey(pubKey.SKI())
+		if err != nil {
+			return nil, errors.WithMessage(err, "could not find matching key for SKI")
+		}
+	} else {
+		var err error
+		privateKey, err = fabricCaUtil.ImportBCCSPKeyFromPEMBytes(opt.PrivateKey, mgr.cryptoSuite, true)
+		if err != nil {
+			return nil, errors.WithMessage(err, "failed to import key")
+		}
+	}
+	return &User{
+		mspID: mgr.orgMSPID,
+		enrollmentCertificate: opt.Cert,
+		privateKey:            privateKey,
+	}, nil
+}
+
 // GetUser returns a user for the given user name
 func (mgr *IdentityManager) GetUser(username string) (*User, error) { //nolint
 
@@ -81,10 +114,7 @@ func (mgr *IdentityManager) GetUser(username string) (*User, error) { //nolint
 	}
 
 	if u == nil {
-		certBytes, err := mgr.getEmbeddedCertBytes(username)
-		if err != nil && err != msp.ErrUserNotFound {
-			return nil, errors.WithMessage(err, "fetching embedded cert failed")
-		}
+		certBytes := mgr.getEmbeddedCertBytes(username)
 		if certBytes == nil {
 			certBytes, err = mgr.getCertBytesFromCertStore(username)
 			if err != nil && err != msp.ErrUserNotFound {
@@ -107,9 +137,9 @@ func (mgr *IdentityManager) GetUser(username string) (*User, error) { //nolint
 		if privateKey == nil {
 			return nil, fmt.Errorf("unable to find private key for user [%s]", username)
 		}
-		mspID, err := mgr.config.MSPID(mgr.orgName)
-		if err != nil {
-			return nil, errors.WithMessage(err, "MSP ID config read failed")
+		mspID, ok := comm.MSPID(mgr.config, mgr.orgName)
+		if !ok {
+			return nil, errors.New("MSP ID config read failed")
 		}
 		u = &User{
 			id:    username,
@@ -121,57 +151,14 @@ func (mgr *IdentityManager) GetUser(username string) (*User, error) { //nolint
 	return u, nil
 }
 
-func (mgr *IdentityManager) getEmbeddedCertBytes(username string) ([]byte, error) {
-	certPem := mgr.embeddedUsers[strings.ToLower(username)].Cert.Pem
-	certPath := pathvar.Subst(mgr.embeddedUsers[strings.ToLower(username)].Cert.Path)
-
-	if certPem == "" && certPath == "" {
-		return nil, msp.ErrUserNotFound
-	}
-
-	var pemBytes []byte
-	var err error
-
-	if certPem != "" {
-		pemBytes = []byte(certPem)
-	} else if certPath != "" {
-		pemBytes, err = ioutil.ReadFile(certPath)
-		if err != nil {
-			return nil, errors.WithMessage(err, "reading cert from embedded path failed")
-		}
-	}
-
-	return pemBytes, nil
+func (mgr *IdentityManager) getEmbeddedCertBytes(username string) []byte {
+	return mgr.embeddedUsers[strings.ToLower(username)].Cert
 }
 
 func (mgr *IdentityManager) getEmbeddedPrivateKey(username string) (core.Key, error) {
-	keyPem := mgr.embeddedUsers[strings.ToLower(username)].Key.Pem
-	keyPath := pathvar.Subst(mgr.embeddedUsers[strings.ToLower(username)].Key.Path)
-
 	var privateKey core.Key
-	var pemBytes []byte
 	var err error
-
-	if keyPem != "" {
-		// Try importing from the Embedded Pem
-		pemBytes = []byte(keyPem)
-	} else if keyPath != "" {
-		// Try importing from the Embedded Path
-		_, err = os.Stat(keyPath)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				return nil, errors.WithMessage(err, "OS stat embedded path failed")
-			}
-			// file doesn't exist, continue
-		} else {
-			// file exists, try to read it
-			pemBytes, err = ioutil.ReadFile(keyPath)
-			if err != nil {
-				return nil, errors.WithMessage(err, "reading private key from embedded path failed")
-			}
-		}
-	}
-
+	pemBytes := mgr.embeddedUsers[strings.ToLower(username)].Key
 	if pemBytes != nil {
 		// Try the crypto provider as a SKI
 		privateKey, err = mgr.cryptoSuite.GetKey(pemBytes)
@@ -179,7 +166,7 @@ func (mgr *IdentityManager) getEmbeddedPrivateKey(username string) (core.Key, er
 			// Try as a pem
 			privateKey, err = fabricCaUtil.ImportBCCSPKeyFromPEMBytes(pemBytes, mgr.cryptoSuite, true)
 			if err != nil {
-				return nil, errors.Wrapf(err, "import private key failed %v", keyPem)
+				return nil, errors.Wrap(err, "import private key failed")
 			}
 		}
 	}

@@ -31,15 +31,18 @@ import (
 	"io/ioutil"
 	"math/big"
 	mrand "math/rand"
+
+	factory "github.com/hyperledger/fabric-sdk-go/internal/github.com/hyperledger/fabric-ca/sdkpatch/cryptosuitebridge"
+	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/core"
+
 	"net/http"
+	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
 	"time"
-
-	factory "github.com/hyperledger/fabric-sdk-go/internal/github.com/hyperledger/fabric-ca/sdkpatch/cryptosuitebridge"
-	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/core"
 
 	"github.com/pkg/errors"
 
@@ -87,6 +90,29 @@ type ECDSASignature struct {
 // ReadFile reads a file
 func ReadFile(file string) ([]byte, error) {
 	return ioutil.ReadFile(file)
+}
+
+// WriteFile writes a file
+func WriteFile(file string, buf []byte, perm os.FileMode) error {
+	dir := path.Dir(file)
+	// Create the directory if it doesn't exist
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		err = os.MkdirAll(dir, 0755)
+		if err != nil {
+			return errors.Wrapf(err, "Failed to create directory '%s' for file '%s'", dir, file)
+		}
+	}
+	return ioutil.WriteFile(file, buf, perm)
+}
+
+// FileExists checks to see if a file exists
+func FileExists(name string) bool {
+	if _, err := os.Stat(name); err != nil {
+		if os.IsNotExist(err) {
+			return false
+		}
+	}
+	return true
 }
 
 // Marshal to bytes

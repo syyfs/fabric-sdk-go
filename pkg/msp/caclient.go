@@ -8,7 +8,6 @@ package msp
 
 import (
 	"fmt"
-
 	"strings"
 
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/logging"
@@ -24,6 +23,7 @@ var logger = logging.NewLogger("fabsdk/msp")
 // CAClientImpl implements api/msp/CAClient
 type CAClientImpl struct {
 	orgName         string
+	caName          string // Currently, an organization can be associated with only one CA
 	orgMSPID        string
 	cryptoSuite     core.CryptoSuite
 	identityManager msp.IdentityManager
@@ -35,25 +35,16 @@ type CAClientImpl struct {
 // NewCAClient creates a new CA CAClient instance
 func NewCAClient(orgName string, ctx contextApi.Client) (*CAClientImpl, error) {
 
-	netConfig, err := ctx.EndpointConfig().NetworkConfig()
-	if err != nil {
-		return nil, errors.Wrapf(err, "network config retrieval failed")
-	}
-
 	if orgName == "" {
-		clientConfig, err1 := ctx.IdentityConfig().Client()
-		if err1 != nil {
-			return nil, errors.Wrapf(err1, "client config retrieval failed")
-		}
-		orgName = clientConfig.Organization
+		orgName = ctx.IdentityConfig().Client().Organization
 	}
 
 	if orgName == "" {
 		return nil, errors.New("organization is missing")
 	}
 
+	netConfig := ctx.EndpointConfig().NetworkConfig()
 	// viper keys are case insensitive
-	//
 	orgConfig, ok := netConfig.Organizations[strings.ToLower(orgName)]
 	if !ok {
 		return nil, errors.New("org config retrieval failed")
@@ -62,14 +53,14 @@ func NewCAClient(orgName string, ctx contextApi.Client) (*CAClientImpl, error) {
 		return nil, errors.New("no CAs configured")
 	}
 
-	var caConfig *msp.CAConfig
 	var adapter *fabricCAAdapter
 	var registrar msp.EnrollCredentials
+	var err error
 
 	// Currently, an organization can be associated with only one CA
 	caName := orgConfig.CertificateAuthorities[0]
-	caConfig, err = ctx.IdentityConfig().CAConfig(orgName)
-	if err == nil {
+	caConfig, ok := ctx.IdentityConfig().CAConfig(orgName)
+	if ok {
 		adapter, err = newFabricCAAdapter(orgName, ctx.CryptoSuite(), ctx.IdentityConfig())
 		if err == nil {
 			registrar = caConfig.Registrar
@@ -77,7 +68,7 @@ func NewCAClient(orgName string, ctx contextApi.Client) (*CAClientImpl, error) {
 			return nil, errors.Wrapf(err, "error initializing CA [%s]", caName)
 		}
 	} else {
-		return nil, errors.Wrapf(err, "error initializing CA [%s]", caName)
+		return nil, errors.Errorf("error initializing CA [%s]", caName)
 	}
 
 	identityManager, ok := ctx.IdentityManager(orgName)
@@ -87,6 +78,7 @@ func NewCAClient(orgName string, ctx contextApi.Client) (*CAClientImpl, error) {
 
 	mgr := &CAClientImpl{
 		orgName:         orgName,
+		caName:          caName,
 		orgMSPID:        orgConfig.MSPID,
 		cryptoSuite:     ctx.CryptoSuite(),
 		identityManager: identityManager,
@@ -132,6 +124,138 @@ func (c *CAClientImpl) Enroll(enrollmentID string, enrollmentSecret string) erro
 	return nil
 }
 
+// CreateIdentity create a new identity with the Fabric CA server. An enrollment secret is returned which can then be used,
+// along with the enrollment ID, to enroll a new identity.
+//  Parameters:
+//  request holds info about identity
+//
+//  Returns:
+//  Return identity info including secret
+func (c *CAClientImpl) CreateIdentity(request *api.IdentityRequest) (*api.IdentityResponse, error) {
+
+	if c.adapter == nil {
+		return nil, fmt.Errorf("no CAs configured for organization: %s", c.orgName)
+	}
+
+	if request == nil {
+		return nil, errors.New("must provide identity request")
+	}
+
+	// Checke required parameters (ID and affiliation)
+	if request.ID == "" || request.Affiliation == "" {
+		return nil, errors.New("ID and affiliation are required")
+	}
+
+	registrar, err := c.getRegistrar(c.registrar.EnrollID, c.registrar.EnrollSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.adapter.CreateIdentity(registrar.PrivateKey(), registrar.EnrollmentCertificate(), request)
+}
+
+// ModifyIdentity modifies identity with the Fabric CA server.
+//  Parameters:
+//  request holds info about identity
+//
+//  Returns:
+//  Return modified identity info
+func (c *CAClientImpl) ModifyIdentity(request *api.IdentityRequest) (*api.IdentityResponse, error) {
+
+	if c.adapter == nil {
+		return nil, fmt.Errorf("no CAs configured for organization: %s", c.orgName)
+	}
+
+	if request == nil {
+		return nil, errors.New("must provide identity request")
+	}
+
+	// Checke required parameters (ID and affiliation)
+	if request.ID == "" || request.Affiliation == "" {
+		return nil, errors.New("ID and affiliation are required")
+	}
+
+	registrar, err := c.getRegistrar(c.registrar.EnrollID, c.registrar.EnrollSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.adapter.ModifyIdentity(registrar.PrivateKey(), registrar.EnrollmentCertificate(), request)
+}
+
+// RemoveIdentity removes identity from the Fabric CA server.
+//  Parameters:
+//  request holds info about identity to be removed
+//
+//  Returns:
+//  Return removed identity info
+func (c *CAClientImpl) RemoveIdentity(request *api.RemoveIdentityRequest) (*api.IdentityResponse, error) {
+
+	if c.adapter == nil {
+		return nil, fmt.Errorf("no CAs configured for organization: %s", c.orgName)
+	}
+
+	if request == nil {
+		return nil, errors.New("must provide remove identity request")
+	}
+
+	// Checke required parameters (ID)
+	if request.ID == "" {
+		return nil, errors.New("ID is required")
+	}
+
+	registrar, err := c.getRegistrar(c.registrar.EnrollID, c.registrar.EnrollSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.adapter.RemoveIdentity(registrar.PrivateKey(), registrar.EnrollmentCertificate(), request)
+
+}
+
+// GetIdentity retrieves identity information.
+//  Parameters:
+//  id is required identity id
+//
+//  Returns:
+//  Returns identity information
+func (c *CAClientImpl) GetIdentity(id, caname string) (*api.IdentityResponse, error) {
+
+	if c.adapter == nil {
+		return nil, fmt.Errorf("no CAs configured for organization: %s", c.orgName)
+	}
+
+	// Checke required parameters (ID and affiliation)
+	if id == "" {
+		return nil, errors.New("id is required")
+	}
+
+	registrar, err := c.getRegistrar(c.registrar.EnrollID, c.registrar.EnrollSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.adapter.GetIdentity(registrar.PrivateKey(), registrar.EnrollmentCertificate(), id, caname)
+}
+
+// GetAllIdentities returns all identities that the caller is authorized to see
+//
+//  Returns:
+//  Response containing identities
+func (c *CAClientImpl) GetAllIdentities(caname string) ([]*api.IdentityResponse, error) {
+
+	if c.adapter == nil {
+		return nil, fmt.Errorf("no CAs configured for organization: %s", c.orgName)
+	}
+
+	registrar, err := c.getRegistrar(c.registrar.EnrollID, c.registrar.EnrollSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.adapter.GetAllIdentities(registrar.PrivateKey(), registrar.EnrollmentCertificate(), caname)
+}
+
 // Reenroll an enrolled user in order to obtain a new signed X509 certificate
 func (c *CAClientImpl) Reenroll(enrollmentID string) error {
 
@@ -139,7 +263,7 @@ func (c *CAClientImpl) Reenroll(enrollmentID string) error {
 		return fmt.Errorf("no CAs configured for organization: %s", c.orgName)
 	}
 	if enrollmentID == "" {
-		logger.Infof("invalid re-enroll request, missing enrollmentID")
+		logger.Info("invalid re-enroll request, missing enrollmentID")
 		return errors.New("user name missing")
 	}
 
@@ -221,6 +345,117 @@ func (c *CAClientImpl) Revoke(request *api.RevocationRequest) (*api.RevocationRe
 		return nil, errors.Wrap(err, "failed to revoke")
 	}
 	return resp, nil
+}
+
+// GetCAInfo returns generic CA information
+func (c *CAClientImpl) GetCAInfo() (*api.GetCAInfoResponse, error) {
+	if c.adapter == nil {
+		return nil, fmt.Errorf("no CAs configured for organization: %s", c.orgName)
+	}
+
+	return c.adapter.GetCAInfo(c.caName)
+}
+
+// GetAffiliation returns information about the requested affiliation
+func (c *CAClientImpl) GetAffiliation(affiliation, caname string) (*api.AffiliationResponse, error) {
+	if c.adapter == nil {
+		return nil, fmt.Errorf("no CAs configured for organization: %s", c.orgName)
+	}
+
+	// Checke required parameters (affiliation)
+	if affiliation == "" {
+		return nil, errors.New("affiliation is required")
+	}
+
+	registrar, err := c.getRegistrar(c.registrar.EnrollID, c.registrar.EnrollSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.adapter.GetAffiliation(registrar.PrivateKey(), registrar.EnrollmentCertificate(), affiliation, caname)
+}
+
+// GetAllAffiliations returns all affiliations that the caller is authorized to see
+func (c *CAClientImpl) GetAllAffiliations(caname string) (*api.AffiliationResponse, error) {
+	if c.adapter == nil {
+		return nil, fmt.Errorf("no CAs configured for organization %s", c.orgName)
+	}
+
+	registrar, err := c.getRegistrar(c.registrar.EnrollID, c.registrar.EnrollSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.adapter.GetAllAffiliations(registrar.PrivateKey(), registrar.EnrollmentCertificate(), caname)
+}
+
+// AddAffiliation adds a new affiliation to the server
+func (c *CAClientImpl) AddAffiliation(request *api.AffiliationRequest) (*api.AffiliationResponse, error) {
+	if c.adapter == nil {
+		return nil, fmt.Errorf("no CAs configured for organization: %s", c.orgName)
+	}
+
+	if request == nil {
+		return nil, errors.New("must provide affiliation request")
+	}
+
+	// Checke required parameters (Name)
+	if request.Name == "" {
+		return nil, errors.New("Name is required")
+	}
+
+	registrar, err := c.getRegistrar(c.registrar.EnrollID, c.registrar.EnrollSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.adapter.AddAffiliation(registrar.PrivateKey(), registrar.EnrollmentCertificate(), request)
+}
+
+// ModifyAffiliation renames an existing affiliation on the server
+func (c *CAClientImpl) ModifyAffiliation(request *api.ModifyAffiliationRequest) (*api.AffiliationResponse, error) {
+	if c.adapter == nil {
+		return nil, fmt.Errorf("no CAs configured for organization: %s", c.orgName)
+	}
+
+	if request == nil {
+		return nil, errors.New("must provide affiliation request")
+	}
+
+	// Checke required parameters (Name and NewName)
+	if request.Name == "" || request.NewName == "" {
+		return nil, errors.New("Name and NewName are required")
+	}
+
+	registrar, err := c.getRegistrar(c.registrar.EnrollID, c.registrar.EnrollSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.adapter.ModifyAffiliation(registrar.PrivateKey(), registrar.EnrollmentCertificate(), request)
+}
+
+// RemoveAffiliation removes an existing affiliation from the server
+func (c *CAClientImpl) RemoveAffiliation(request *api.AffiliationRequest) (*api.AffiliationResponse, error) {
+	if c.adapter == nil {
+		return nil, fmt.Errorf("no CAs configured for organization: %s", c.orgName)
+	}
+
+	if request == nil {
+		return nil, errors.New("must provide remove affiliation request")
+	}
+
+	// Checke required parameters (Name)
+	if request.Name == "" {
+		return nil, errors.New("Name is required")
+	}
+
+	registrar, err := c.getRegistrar(c.registrar.EnrollID, c.registrar.EnrollSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.adapter.RemoveAffiliation(registrar.PrivateKey(), registrar.EnrollmentCertificate(), request)
 }
 
 func (c *CAClientImpl) getRegistrar(enrollID string, enrollSecret string) (msp.SigningIdentity, error) {

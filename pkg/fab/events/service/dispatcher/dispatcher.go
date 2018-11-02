@@ -20,7 +20,7 @@ import (
 	ledgerutil "github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/core/ledger/util"
 	cb "github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/common"
 	pb "github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/peer"
-	utils "github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/utils"
+	"github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/utils"
 	"github.com/pkg/errors"
 )
 
@@ -44,19 +44,20 @@ type HandlerRegistry map[reflect.Type]Handler
 // This also avoids the need for synchronization.
 type Dispatcher struct {
 	params
-	handlers                   map[reflect.Type]Handler
+	lastBlockNum               uint64
+	updateLastBlockInfoOnly    bool
+	state                      int32
 	eventch                    chan interface{}
 	blockRegistrations         []*BlockReg
 	filteredBlockRegistrations []*FilteredBlockReg
+	handlers                   map[reflect.Type]Handler
 	txRegistrations            map[string]*TxStatusReg
 	ccRegistrations            map[string]*ChaincodeReg
-	state                      int32
-	lastBlockNum               uint64
 }
 
 // New creates a new Dispatcher.
 func New(opts ...options.Opt) *Dispatcher {
-	logger.Debugf("Creating new dispatcher.")
+	logger.Debug("Creating new dispatcher.")
 
 	params := defaultParams()
 	options.Apply(params, opts)
@@ -80,6 +81,8 @@ func (ed *Dispatcher) RegisterHandlers() {
 	ed.RegisterHandler(&RegisterFilteredBlockEvent{}, ed.handleRegisterFilteredBlockEvent)
 	ed.RegisterHandler(&UnregisterEvent{}, ed.handleUnregisterEvent)
 	ed.RegisterHandler(&StopEvent{}, ed.HandleStopEvent)
+	ed.RegisterHandler(&TransferEvent{}, ed.HandleTransferEvent)
+	ed.RegisterHandler(&StopAndTransferEvent{}, ed.HandleStopAndTransferEvent)
 	ed.RegisterHandler(&RegistrationInfoEvent{}, ed.handleRegistrationInfoEvent)
 
 	// The following events are used for testing only
@@ -105,6 +108,16 @@ func (ed *Dispatcher) Start() error {
 
 	ed.RegisterHandlers()
 
+	if err := ed.initRegistrations(); err != nil {
+		return errors.WithMessage(err, "error initializing registrations")
+	}
+
+	if ed.initialLastBlockNum > 0 {
+		if err := ed.updateLastBlockNum(ed.initialLastBlockNum); err != nil {
+			logger.Warnf("Unable to update last block num to %d: %s", ed.initialLastBlockNum, err)
+		}
+	}
+
 	go func() {
 		for {
 			if ed.getState() == dispatcherStateStopped {
@@ -117,10 +130,10 @@ func (ed *Dispatcher) Start() error {
 				break
 			}
 
-			logger.Debugf("Received event: %v", reflect.TypeOf(e))
+			logger.Debugf("Received event: %+v", reflect.TypeOf(e))
 
 			if handler, ok := ed.handlers[reflect.TypeOf(e)]; ok {
-				logger.Debugf("Dispatching event: %v", reflect.TypeOf(e))
+				logger.Debugf("Dispatching event: %+v", reflect.TypeOf(e))
 				handler(e)
 			} else {
 				logger.Errorf("Handler not found for: %s", reflect.TypeOf(e))
@@ -144,45 +157,89 @@ func (ed *Dispatcher) updateLastBlockNum(blockNum uint64) error {
 	lastBlockNum := atomic.LoadUint64(&ed.lastBlockNum)
 	if lastBlockNum == math.MaxUint64 || blockNum > lastBlockNum {
 		atomic.StoreUint64(&ed.lastBlockNum, blockNum)
+		logger.Debugf("Updated last block received to %d", blockNum)
 		return nil
 	}
-	return errors.Errorf("Expecting a block number greater than %d but received block number %d", lastBlockNum, lastBlockNum)
+	return errors.Errorf("Expecting a block number greater than %d but received block number %d", lastBlockNum, blockNum)
+}
+
+func (ed *Dispatcher) initRegistrations() error {
+	logger.Debugf("Initializing registrations...")
+	for _, reg := range ed.initialBlockRegistrations {
+		logger.Debugf("Adding block registration")
+		ed.registerBlockEvent(reg)
+	}
+	for _, reg := range ed.initialFilteredBlockRegistrations {
+		logger.Debugf("Adding filtered block registration")
+		ed.registerFilteredBlockEvent(reg)
+	}
+	for _, reg := range ed.initialCCRegistrations {
+		logger.Debugf("Adding CC registration: CC ID [%s], Event filter [%s]", reg.ChaincodeID, reg.EventFilter)
+		if err := ed.registerCCEvent(reg); err != nil {
+			logger.Warnf("Error adding CC registration: %s", err)
+			return err
+		}
+	}
+	for _, reg := range ed.initialTxStatusRegistrations {
+		logger.Debugf("Adding TxStatus registration: TxID [%s]", reg.TxID)
+		if err := ed.registerTxStatusEvent(reg); err != nil {
+			logger.Warnf("Error adding TxStatus registration: %s", err)
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (ed *Dispatcher) clearRegistrations(closeChannel bool) {
+	ed.clearBlockRegistrations(closeChannel)
+	ed.clearFilteredBlockRegistrations(closeChannel)
+	ed.clearTxRegistrations(closeChannel)
+	ed.clearChaincodeRegistrations(closeChannel)
 }
 
 // clearBlockRegistrations removes all block registrations and closes the corresponding event channels.
 // The listener will receive a 'closed' event to indicate that the channel has been closed.
-func (ed *Dispatcher) clearBlockRegistrations() {
-	for _, reg := range ed.blockRegistrations {
-		close(reg.Eventch)
+func (ed *Dispatcher) clearBlockRegistrations(closeChannel bool) {
+	if closeChannel {
+		for _, reg := range ed.blockRegistrations {
+			close(reg.Eventch)
+		}
 	}
 	ed.blockRegistrations = nil
 }
 
 // clearFilteredBlockRegistrations removes all filtered block registrations and closes the corresponding event channels.
 // The listener will receive a 'closed' event to indicate that the channel has been closed.
-func (ed *Dispatcher) clearFilteredBlockRegistrations() {
-	for _, reg := range ed.filteredBlockRegistrations {
-		close(reg.Eventch)
+func (ed *Dispatcher) clearFilteredBlockRegistrations(closeChannel bool) {
+	if closeChannel {
+		for _, reg := range ed.filteredBlockRegistrations {
+			close(reg.Eventch)
+		}
 	}
 	ed.filteredBlockRegistrations = nil
 }
 
 // clearTxRegistrations removes all transaction registrations and closes the corresponding event channels.
 // The listener will receive a 'closed' event to indicate that the channel has been closed.
-func (ed *Dispatcher) clearTxRegistrations() {
-	for _, reg := range ed.txRegistrations {
-		logger.Debugf("Closing TX registration event channel for TxID [%s].", reg.TxID)
-		close(reg.Eventch)
+func (ed *Dispatcher) clearTxRegistrations(closeChannel bool) {
+	if closeChannel {
+		for _, reg := range ed.txRegistrations {
+			logger.Debugf("Closing TX registration event channel for TxID [%s].", reg.TxID)
+			close(reg.Eventch)
+		}
 	}
 	ed.txRegistrations = make(map[string]*TxStatusReg)
 }
 
 // clearChaincodeRegistrations removes all chaincode registrations and closes the corresponding event channels.
 // The listener will receive a 'closed' event to indicate that the channel has been closed.
-func (ed *Dispatcher) clearChaincodeRegistrations() {
-	for _, reg := range ed.ccRegistrations {
-		logger.Debugf("Closing chaincode registration event channel for CC ID [%s] and event filter [%s].", reg.ChaincodeID, reg.EventFilter)
-		close(reg.Eventch)
+func (ed *Dispatcher) clearChaincodeRegistrations(closeChannel bool) {
+	if closeChannel {
+		for _, reg := range ed.ccRegistrations {
+			logger.Debugf("Closing chaincode registration event channel for CC ID [%s] and event filter [%s].", reg.ChaincodeID, reg.EventFilter)
+			close(reg.Eventch)
+		}
 	}
 	ed.ccRegistrations = make(map[string]*ChaincodeReg)
 }
@@ -195,59 +252,108 @@ func (ed *Dispatcher) HandleStopEvent(e Event) {
 	logger.Debugf("Stopping dispatcher...")
 	if !ed.setState(dispatcherStateStarted, dispatcherStateStopped) {
 		logger.Warn("Cannot stop event dispatcher since it's already stopped.")
+		event.ErrCh <- errors.New("dispatcher already stopped")
 		return
 	}
 
 	// Remove all registrations and close the associated event channels
 	// so that the client is notified that the registration has been removed
-	ed.clearBlockRegistrations()
-	ed.clearFilteredBlockRegistrations()
-	ed.clearTxRegistrations()
-	ed.clearChaincodeRegistrations()
+	ed.clearRegistrations(true)
 
 	event.ErrCh <- nil
+}
+
+// HandleTransferEvent transfers all event registrations into a EventSnapshot.
+func (ed *Dispatcher) HandleTransferEvent(e Event) {
+	event := e.(*TransferEvent)
+
+	event.SnapshotCh <- ed.newSnapshot()
+
+	// Remove all registrations but don't close the associated event channels
+	ed.clearRegistrations(false)
+}
+
+// HandleStopAndTransferEvent stops the dispatcher and transfers all event registrations
+// into a EventSnapshot.
+// The Dispatcher is no longer usable.
+func (ed *Dispatcher) HandleStopAndTransferEvent(e Event) {
+	event := e.(*StopAndTransferEvent)
+
+	logger.Debugf("Stopping dispatcher...")
+	if !ed.setState(dispatcherStateStarted, dispatcherStateStopped) {
+		logger.Warn("Cannot stop event dispatcher since it's already stopped.")
+		event.ErrCh <- errors.New("dispatcher already stopped")
+		return
+	}
+
+	event.SnapshotCh <- ed.newSnapshot()
+
+	// Remove all registrations but don't close the associated event channels
+	ed.clearRegistrations(false)
 }
 
 func (ed *Dispatcher) handleRegisterBlockEvent(e Event) {
 	event := e.(*RegisterBlockEvent)
 
-	ed.blockRegistrations = append(ed.blockRegistrations, event.Reg)
+	ed.registerBlockEvent(event.Reg)
 	event.RegCh <- event.Reg
+}
+
+func (ed *Dispatcher) registerBlockEvent(reg *BlockReg) {
+	ed.blockRegistrations = append(ed.blockRegistrations, reg)
 }
 
 func (ed *Dispatcher) handleRegisterFilteredBlockEvent(e Event) {
 	event := e.(*RegisterFilteredBlockEvent)
-	ed.filteredBlockRegistrations = append(ed.filteredBlockRegistrations, event.Reg)
+	ed.registerFilteredBlockEvent(event.Reg)
 	event.RegCh <- event.Reg
+}
+
+func (ed *Dispatcher) registerFilteredBlockEvent(reg *FilteredBlockReg) {
+	ed.filteredBlockRegistrations = append(ed.filteredBlockRegistrations, reg)
 }
 
 func (ed *Dispatcher) handleRegisterCCEvent(e Event) {
 	event := e.(*RegisterChaincodeEvent)
 
-	key := getCCKey(event.Reg.ChaincodeID, event.Reg.EventFilter)
-	if _, exists := ed.ccRegistrations[key]; exists {
-		event.ErrCh <- errors.Errorf("registration already exists for chaincode [%s] and event [%s]", event.Reg.ChaincodeID, event.Reg.EventFilter)
+	regExp, err := regexp.Compile(event.Reg.EventFilter)
+	if err != nil {
+		event.ErrCh <- errors.Wrapf(err, "error compiling regular expression for event filter [%s]", event.Reg.EventFilter)
 	} else {
-		regExp, err := regexp.Compile(event.Reg.EventFilter)
-		if err != nil {
-			event.ErrCh <- errors.Wrapf(err, "error compiling regular expression for event filter [%s]", event.Reg.EventFilter)
+		event.Reg.EventRegExp = regExp
+		if err := ed.registerCCEvent(event.Reg); err != nil {
+			event.ErrCh <- err
 		} else {
-			event.Reg.EventRegExp = regExp
-			ed.ccRegistrations[key] = event.Reg
 			event.RegCh <- event.Reg
 		}
 	}
 }
 
+func (ed *Dispatcher) registerCCEvent(reg *ChaincodeReg) error {
+	key := getCCKey(reg.ChaincodeID, reg.EventFilter)
+	if _, exists := ed.ccRegistrations[key]; exists {
+		return errors.Errorf("registration already exists for chaincode [%s] and event [%s]", reg.ChaincodeID, reg.EventFilter)
+	}
+	ed.ccRegistrations[key] = reg
+	return nil
+}
+
 func (ed *Dispatcher) handleRegisterTxStatusEvent(e Event) {
 	event := e.(*RegisterTxStatusEvent)
 
-	if _, exists := ed.txRegistrations[event.Reg.TxID]; exists {
-		event.ErrCh <- errors.Errorf("registration already exists for TX ID [%s]", event.Reg.TxID)
+	if err := ed.registerTxStatusEvent(event.Reg); err != nil {
+		event.ErrCh <- err
 	} else {
-		ed.txRegistrations[event.Reg.TxID] = event.Reg
 		event.RegCh <- event.Reg
 	}
+}
+
+func (ed *Dispatcher) registerTxStatusEvent(reg *TxStatusReg) error {
+	if _, exists := ed.txRegistrations[reg.TxID]; exists {
+		return errors.Errorf("registration already exists for TX ID [%s]", reg.TxID)
+	}
+	ed.txRegistrations[reg.TxID] = reg
+	return nil
 }
 
 func (ed *Dispatcher) handleUnregisterEvent(e Event) {
@@ -264,7 +370,7 @@ func (ed *Dispatcher) handleUnregisterEvent(e Event) {
 	case *TxStatusReg:
 		err = ed.unregisterTXEvents(registration)
 	default:
-		err = errors.Errorf("Unsupported registration type: %v", reflect.TypeOf(registration))
+		err = errors.Errorf("Unsupported registration type: %+v", reflect.TypeOf(registration))
 	}
 	if err != nil {
 		logger.Warnf("Error in unregister: %s", err)
@@ -297,6 +403,28 @@ func (ed *Dispatcher) handleRegistrationInfoEvent(e Event) {
 	evt.RegInfoCh <- regInfo
 }
 
+func (ed *Dispatcher) newSnapshot() fab.EventSnapshot {
+	var ccRegistrations []*ChaincodeReg
+	for _, reg := range ed.ccRegistrations {
+		logger.Debugf("Adding CC registration to snaphot - CC ID [%s], Event filter [%s]", reg.ChaincodeID, reg.EventFilter)
+		ccRegistrations = append(ccRegistrations, reg)
+	}
+
+	var txRegistrations []*TxStatusReg
+	for _, reg := range ed.txRegistrations {
+		logger.Debugf("Adding TxStatus registration to snaphot - TxID [%s]", reg.TxID)
+		txRegistrations = append(txRegistrations, reg)
+	}
+
+	return &snapshot{
+		lastBlockReceived:          ed.LastBlockNum(),
+		blockRegistrations:         ed.blockRegistrations,
+		filteredBlockRegistrations: ed.filteredBlockRegistrations,
+		ccRegistrations:            ccRegistrations,
+		txStatusRegistrations:      txRegistrations,
+	}
+}
+
 // HandleBlock handles a block event
 func (ed *Dispatcher) HandleBlock(block *cb.Block, sourceURL string) {
 	logger.Debugf("Handling block event - Block #%d", block.Header.Number)
@@ -306,6 +434,12 @@ func (ed *Dispatcher) HandleBlock(block *cb.Block, sourceURL string) {
 		return
 	}
 
+	if ed.updateLastBlockInfoOnly {
+		ed.updateLastBlockInfoOnly = false
+		return
+	}
+
+	logger.Debug("Publishing block event...")
 	ed.publishBlockEvents(block, sourceURL)
 	ed.publishFilteredBlockEvents(toFilteredBlock(block), sourceURL)
 }
@@ -319,7 +453,12 @@ func (ed *Dispatcher) HandleFilteredBlock(fblock *pb.FilteredBlock, sourceURL st
 		return
 	}
 
-	logger.Debugf("Publishing filtered block event...")
+	if ed.updateLastBlockInfoOnly {
+		ed.updateLastBlockInfoOnly = false
+		return
+	}
+
+	logger.Debug("Publishing filtered block event...")
 	ed.publishFilteredBlockEvents(fblock, sourceURL)
 }
 
@@ -385,7 +524,7 @@ func (ed *Dispatcher) publishBlockEvents(block *cb.Block, sourceURL string) {
 			select {
 			case reg.Eventch <- NewBlockEvent(block, sourceURL):
 			default:
-				logger.Warnf("Unable to send to block event channel.")
+				logger.Warn("Unable to send to block event channel.")
 			}
 		} else if ed.eventConsumerTimeout == 0 {
 			reg.Eventch <- NewBlockEvent(block, sourceURL)
@@ -393,7 +532,7 @@ func (ed *Dispatcher) publishBlockEvents(block *cb.Block, sourceURL string) {
 			select {
 			case reg.Eventch <- NewBlockEvent(block, sourceURL):
 			case <-time.After(ed.eventConsumerTimeout):
-				logger.Warnf("Timed out sending block event.")
+				logger.Warn("Timed out sending block event.")
 			}
 		}
 	}
@@ -401,7 +540,7 @@ func (ed *Dispatcher) publishBlockEvents(block *cb.Block, sourceURL string) {
 
 func (ed *Dispatcher) publishFilteredBlockEvents(fblock *pb.FilteredBlock, sourceURL string) {
 	if fblock == nil {
-		logger.Warnf("Filtered block is nil. Event will not be published")
+		logger.Warn("Filtered block is nil. Event will not be published")
 		return
 	}
 
@@ -418,11 +557,16 @@ func (ed *Dispatcher) publishFilteredBlockEvents(fblock *pb.FilteredBlock, sourc
 			if txActions == nil {
 				continue
 			}
+			if len(txActions.ChaincodeActions) == 0 {
+				logger.Debugf("No chaincode action found for TxID[%s], block[%d], source URL[%s]", tx.Txid, fblock.Number, sourceURL)
+			}
 			for _, action := range txActions.ChaincodeActions {
 				if action.ChaincodeEvent != nil {
 					ed.publishCCEvents(action.ChaincodeEvent, fblock.Number, sourceURL)
 				}
 			}
+		} else {
+			logger.Debugf("Cannot publish CCEvents for block[%d] and source URL[%s] since Tx Validation Code[%d] is not valid", fblock.Number, sourceURL, tx.TxValidationCode)
 		}
 	}
 }
@@ -433,7 +577,7 @@ func checkFilteredBlockRegistrations(ed *Dispatcher, fblock *pb.FilteredBlock, s
 			select {
 			case reg.Eventch <- NewFilteredBlockEvent(fblock, sourceURL):
 			default:
-				logger.Warnf("Unable to send to filtered block event channel.")
+				logger.Warn("Unable to send to filtered block event channel.")
 			}
 		} else if ed.eventConsumerTimeout == 0 {
 			reg.Eventch <- NewFilteredBlockEvent(fblock, sourceURL)
@@ -441,7 +585,7 @@ func checkFilteredBlockRegistrations(ed *Dispatcher, fblock *pb.FilteredBlock, s
 			select {
 			case reg.Eventch <- NewFilteredBlockEvent(fblock, sourceURL):
 			case <-time.After(ed.eventConsumerTimeout):
-				logger.Warnf("Timed out sending filtered block event.")
+				logger.Warn("Timed out sending filtered block event.")
 			}
 		}
 	}
@@ -456,7 +600,7 @@ func (ed *Dispatcher) publishTxStatusEvents(tx *pb.FilteredTransaction, blockNum
 			select {
 			case reg.Eventch <- NewTxStatusEvent(tx.Txid, tx.TxValidationCode, blockNum, sourceURL):
 			default:
-				logger.Warnf("Unable to send to Tx Status event channel.")
+				logger.Warn("Unable to send to Tx Status event channel.")
 			}
 		} else if ed.eventConsumerTimeout == 0 {
 			reg.Eventch <- NewTxStatusEvent(tx.Txid, tx.TxValidationCode, blockNum, sourceURL)
@@ -464,7 +608,7 @@ func (ed *Dispatcher) publishTxStatusEvents(tx *pb.FilteredTransaction, blockNum
 			select {
 			case reg.Eventch <- NewTxStatusEvent(tx.Txid, tx.TxValidationCode, blockNum, sourceURL):
 			case <-time.After(ed.eventConsumerTimeout):
-				logger.Warnf("Timed out sending Tx Status event.")
+				logger.Warn("Timed out sending Tx Status event.")
 			}
 		}
 	}
@@ -480,7 +624,7 @@ func (ed *Dispatcher) publishCCEvents(ccEvent *pb.ChaincodeEvent, blockNum uint6
 				select {
 				case reg.Eventch <- NewChaincodeEvent(ccEvent.ChaincodeId, ccEvent.EventName, ccEvent.TxId, ccEvent.Payload, blockNum, sourceURL):
 				default:
-					logger.Warnf("Unable to send to CC event channel.")
+					logger.Warn("Unable to send to CC event channel.")
 				}
 			} else if ed.eventConsumerTimeout == 0 {
 				reg.Eventch <- NewChaincodeEvent(ccEvent.ChaincodeId, ccEvent.EventName, ccEvent.TxId, ccEvent.Payload, blockNum, sourceURL)
@@ -488,7 +632,7 @@ func (ed *Dispatcher) publishCCEvents(ccEvent *pb.ChaincodeEvent, blockNum uint6
 				select {
 				case reg.Eventch <- NewChaincodeEvent(ccEvent.ChaincodeId, ccEvent.EventName, ccEvent.TxId, ccEvent.Payload, blockNum, sourceURL):
 				case <-time.After(ed.eventConsumerTimeout):
-					logger.Warnf("Timed out sending CC event.")
+					logger.Warn("Timed out sending CC event.")
 				}
 			}
 		}
@@ -506,6 +650,11 @@ func (ed *Dispatcher) RegisterHandler(t interface{}, h Handler) {
 	}
 }
 
+//UpdateLastBlockInfoOnly sets is next event should only be used for updating last block info.
+func (ed *Dispatcher) UpdateLastBlockInfoOnly() {
+	ed.updateLastBlockInfoOnly = true
+}
+
 func getCCKey(ccID, eventFilter string) string {
 	return ccID + "/" + eventFilter
 }
@@ -518,7 +667,7 @@ func toFilteredBlock(block *cb.Block) *pb.FilteredBlock {
 	for i, data := range block.Data.Data {
 		filteredTx, chID, err := getFilteredTx(data, txFilter.Flag(i))
 		if err != nil {
-			logger.Warnf("error extracting Envelope from block: %v", err)
+			logger.Warnf("error extracting Envelope from block: %s", err)
 			continue
 		}
 		channelID = chID

@@ -15,7 +15,6 @@ import (
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/core"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/msp"
-	"github.com/hyperledger/fabric-sdk-go/pkg/core/config/endpoint"
 )
 
 // IdentityManager implements fab/IdentityManager
@@ -24,7 +23,7 @@ type IdentityManager struct {
 	orgMSPID        string
 	config          fab.EndpointConfig
 	cryptoSuite     core.CryptoSuite
-	embeddedUsers   map[string]endpoint.TLSKeyPair
+	embeddedUsers   map[string]fab.CertKeyPair
 	mspPrivKeyStore core.KVStore
 	mspCertStore    core.KVStore
 	userStore       msp.UserStore
@@ -33,11 +32,7 @@ type IdentityManager struct {
 // NewIdentityManager creates a new instance of IdentityManager
 func NewIdentityManager(orgName string, userStore msp.UserStore, cryptoSuite core.CryptoSuite, endpointConfig fab.EndpointConfig) (*IdentityManager, error) {
 
-	netConfig, err := endpointConfig.NetworkConfig()
-	if err != nil {
-		return nil, errors.Wrapf(err, "network config retrieval failed")
-	}
-
+	netConfig := endpointConfig.NetworkConfig()
 	// viper keys are case insensitive
 	orgConfig, ok := netConfig.Organizations[strings.ToLower(orgName)]
 	if !ok {
@@ -53,16 +48,17 @@ func NewIdentityManager(orgName string, userStore msp.UserStore, cryptoSuite cor
 
 	orgCryptoPathTemplate := orgConfig.CryptoPath
 	if orgCryptoPathTemplate != "" {
+		var err error
 		if !filepath.IsAbs(orgCryptoPathTemplate) {
 			orgCryptoPathTemplate = filepath.Join(endpointConfig.CryptoConfigPath(), orgCryptoPathTemplate)
 		}
 		mspPrivKeyStore, err = NewFileKeyStore(orgCryptoPathTemplate)
 		if err != nil {
-			return nil, errors.Wrapf(err, "creating a private key store failed")
+			return nil, errors.Wrap(err, "creating a private key store failed")
 		}
 		mspCertStore, err = NewFileCertStore(orgCryptoPathTemplate)
 		if err != nil {
-			return nil, errors.Wrapf(err, "creating a cert store failed")
+			return nil, errors.Wrap(err, "creating a cert store failed")
 		}
 	} else {
 		logger.Warnf("Cryptopath not provided for organization [%s], MSP stores not created", orgName)

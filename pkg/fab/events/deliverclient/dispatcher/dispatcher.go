@@ -33,13 +33,13 @@ type dsConnection interface {
 // in order to avoid any race conditions and to ensure that events are processed in the order that they are received.
 // This also avoids the need for synchronization.
 type Dispatcher struct {
-	clientdisp.Dispatcher
+	*clientdisp.Dispatcher
 }
 
 // New returns a new deliver dispatcher
-func New(context fabcontext.Client, chConfig fab.ChannelCfg, connectionProvider api.ConnectionProvider, opts ...options.Opt) *Dispatcher {
+func New(context fabcontext.Client, chConfig fab.ChannelCfg, discoveryService fab.DiscoveryService, connectionProvider api.ConnectionProvider, opts ...options.Opt) *Dispatcher {
 	return &Dispatcher{
-		Dispatcher: *clientdisp.New(context, chConfig, connectionProvider, opts...),
+		Dispatcher: clientdisp.New(context, chConfig, discoveryService, connectionProvider, opts...),
 	}
 }
 
@@ -60,7 +60,7 @@ func (ed *Dispatcher) handleSeekEvent(e esdispatcher.Event) {
 	evt := e.(*SeekEvent)
 
 	if ed.Connection() == nil {
-		logger.Warnf("Unable to register channel since no connection was established.")
+		logger.Warn("Unable to register channel since no connection was established.")
 		return
 	}
 

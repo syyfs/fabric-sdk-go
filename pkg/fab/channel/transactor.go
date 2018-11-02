@@ -7,16 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 package channel
 
 import (
+	reqContext "context"
 	"strings"
 
 	"github.com/pkg/errors"
 
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/context"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
-
-	reqContext "context"
-
-	"github.com/hyperledger/fabric-sdk-go/pkg/common/errors/status"
 	contextImpl "github.com/hyperledger/fabric-sdk-go/pkg/context"
 	"github.com/hyperledger/fabric-sdk-go/pkg/core/config/endpoint"
 	"github.com/hyperledger/fabric-sdk-go/pkg/fab/txn"
@@ -63,8 +60,7 @@ func orderersFromChannelCfg(ctx context.Client, cfg fab.ChannelCfg) ([]fab.Order
 		return nil, err
 	}
 	if len(orderers) > 0 {
-		logger.Warn("Getting orderers from endpoint config channels.orderer is deprecated, use entity matchers to override orderer configuration")
-		logger.Warn("visit https://github.com/hyperledger/fabric-sdk-go/blob/master/test/fixtures/config/overrides/local_entity_matchers.yaml for samples")
+
 		return orderers, nil
 	}
 
@@ -83,8 +79,8 @@ func orderersFromChannelCfg(ctx context.Client, cfg fab.ChannelCfg) ([]fab.Order
 		if !ok {
 			logger.Debugf("Failed to get channel Cfg orderer [%s] from ordererDict, now trying orderer Matchers in Entity Matchers", target)
 			// Try to find a match from entityMatchers config
-			matchingOrdererConfig, matchErr := ctx.EndpointConfig().OrdererConfig(strings.ToLower(target))
-			if matchErr == nil {
+			matchingOrdererConfig, found := ctx.EndpointConfig().OrdererConfig(strings.ToLower(target))
+			if found {
 				logger.Debugf("Found matching ordererConfig from entity Matchers for channel Cfg Orderer [%s]", target)
 				oCfg = *matchingOrdererConfig
 				ok = true
@@ -115,20 +111,12 @@ func orderersFromChannelCfg(ctx context.Client, cfg fab.ChannelCfg) ([]fab.Order
 //will return empty list when orderers are not found in endpoint config
 func orderersFromChannel(ctx context.Client, channelID string) ([]fab.Orderer, error) {
 
-	chNetworkConfig, err := ctx.EndpointConfig().ChannelConfig(channelID)
-	if err != nil {
-		return nil, errors.WithMessage(err, "failed to get channel network config")
-	}
-
+	chNetworkConfig := ctx.EndpointConfig().ChannelConfig(channelID)
 	orderers := []fab.Orderer{}
 	for _, chOrderer := range chNetworkConfig.Orderers {
 
-		ordererConfig, err := ctx.EndpointConfig().OrdererConfig(chOrderer)
-		if err != nil {
-			s, ok := status.FromError(err)
-			if !ok || s.Code != status.NoMatchingOrdererEntity.ToInt32() {
-				return nil, errors.Wrapf(err, "unable to get orderer config from [%s]", chOrderer)
-			}
+		ordererConfig, found := ctx.EndpointConfig().OrdererConfig(chOrderer)
+		if !found {
 			//continue if given channel orderer not found in endpoint config
 			continue
 		}
@@ -145,10 +133,7 @@ func orderersFromChannel(ctx context.Client, channelID string) ([]fab.Orderer, e
 
 func orderersByTarget(ctx context.Client) (map[string]fab.OrdererConfig, error) {
 	ordererDict := map[string]fab.OrdererConfig{}
-	orderersConfig, err := ctx.EndpointConfig().OrderersConfig()
-	if err != nil {
-		return nil, errors.WithMessage(err, "loading orderers config failed")
-	}
+	orderersConfig := ctx.EndpointConfig().OrderersConfig()
 
 	for _, oc := range orderersConfig {
 		address := endpoint.ToAddress(oc.URL)
@@ -158,14 +143,14 @@ func orderersByTarget(ctx context.Client) (map[string]fab.OrdererConfig, error) 
 }
 
 // CreateTransactionHeader creates a Transaction Header based on the current context.
-func (t *Transactor) CreateTransactionHeader() (fab.TransactionHeader, error) {
+func (t *Transactor) CreateTransactionHeader(opts ...fab.TxnHeaderOpt) (fab.TransactionHeader, error) {
 
 	ctx, ok := contextImpl.RequestClientContext(t.reqCtx)
 	if !ok {
 		return nil, errors.New("failed get client context from reqContext for txn Header")
 	}
 
-	txh, err := txn.NewHeader(ctx, t.ChannelID)
+	txh, err := txn.NewHeader(ctx, t.ChannelID, opts...)
 	if err != nil {
 		return nil, errors.WithMessage(err, "new transaction ID failed")
 	}

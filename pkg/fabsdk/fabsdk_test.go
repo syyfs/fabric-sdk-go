@@ -15,7 +15,6 @@ import (
 	"github.com/hyperledger/fabric-sdk-go/pkg/client/resmgmt"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
 	configImpl "github.com/hyperledger/fabric-sdk-go/pkg/core/config"
-	"github.com/hyperledger/fabric-sdk-go/pkg/core/config/endpoint"
 	mockapisdk "github.com/hyperledger/fabric-sdk-go/pkg/fabsdk/test/mocksdkapi"
 	"github.com/hyperledger/fabric-sdk-go/pkg/msp"
 	"github.com/pkg/errors"
@@ -31,7 +30,7 @@ func TestNewGoodOpt(t *testing.T) {
 	sdk, err := New(configImpl.FromFile(sdkConfigFile),
 		goodOpt())
 	if err != nil {
-		t.Fatalf("Expected no error from New, but got %v", err)
+		t.Fatalf("Expected no error from New, but got %s", err)
 	}
 	sdk.Close()
 }
@@ -46,7 +45,7 @@ func TestNewBadOpt(t *testing.T) {
 	_, err := New(configImpl.FromFile(sdkConfigFile),
 		badOpt())
 	if err == nil {
-		t.Fatalf("Expected error from New")
+		t.Fatal("Expected error from New")
 	}
 }
 
@@ -60,7 +59,7 @@ func TestDoubleClose(t *testing.T) {
 	sdk, err := New(configImpl.FromFile(sdkConfigFile),
 		goodOpt())
 	if err != nil {
-		t.Fatalf("Expected no error from New, but got %v", err)
+		t.Fatalf("Expected no error from New, but got %s", err)
 	}
 	sdk.Close()
 	sdk.Close()
@@ -80,7 +79,7 @@ func TestWithCorePkg(t *testing.T) {
 	factory := mockapisdk.NewMockCoreProviderFactory(mockCtrl)
 
 	factory.EXPECT().CreateCryptoSuiteProvider(gomock.Any()).Return(nil, nil)
-	factory.EXPECT().CreateSigningManager(nil).Return(nil, nil)
+	factory.EXPECT().CreateSigningManager(gomock.Any()).Return(nil, nil)
 	factory.EXPECT().CreateInfraProvider(gomock.Any()).Return(nil, nil)
 
 	_, err = New(c, WithCorePkg(factory))
@@ -126,9 +125,8 @@ func TestWithServicePkg(t *testing.T) {
 	defer mockCtrl.Finish()
 	factory := mockapisdk.NewMockServiceProviderFactory(mockCtrl)
 
-	factory.EXPECT().CreateDiscoveryProvider(gomock.Any()).Return(nil, nil)
 	factory.EXPECT().CreateLocalDiscoveryProvider(gomock.Any()).Return(nil, nil)
-	factory.EXPECT().CreateSelectionProvider(gomock.Any()).Return(nil, nil)
+	factory.EXPECT().CreateChannelProvider(gomock.Any()).Return(nil, nil)
 
 	_, err = New(c, WithServicePkg(factory))
 	if err != nil {
@@ -179,21 +177,21 @@ func TestErrPkgSuite(t *testing.T) {
 	ps.errOnCore = true
 	_, err = fromPkgSuite(c, &ps)
 	if err == nil {
-		t.Fatalf("Expected error initializing SDK")
+		t.Fatal("Expected error initializing SDK")
 	}
 	ps.errOnCore = false
 
 	ps.errOnService = true
 	_, err = fromPkgSuite(c, &ps)
 	if err == nil {
-		t.Fatalf("Expected error initializing SDK")
+		t.Fatal("Expected error initializing SDK")
 	}
 	ps.errOnService = false
 
 	ps.errOnLogger = true
 	_, err = fromPkgSuite(c, &ps)
 	if err == nil {
-		t.Fatalf("Expected error initializing SDK")
+		t.Fatal("Expected error initializing SDK")
 	}
 	ps.errOnLogger = false
 }
@@ -210,7 +208,7 @@ func TestNewDefaultSDKFromByte(t *testing.T) {
 	}
 
 	if sdk == nil {
-		t.Fatalf("SDK should not be empty when initialized")
+		t.Fatal("SDK should not be empty when initialized")
 	}
 	sdk.Close()
 }
@@ -233,7 +231,7 @@ func loadConfigBytesFromFile(t *testing.T, filePath string) ([]byte, error) {
 		t.Fatalf("Failed to read test config for bytes array testing. Error: %s", err)
 	}
 	if n == 0 {
-		t.Fatalf("Failed to read test config for bytes array testing. Mock bytes array is empty")
+		t.Fatal("Failed to read test config for bytes array testing. Mock bytes array is empty")
 	}
 	return cBytes, err
 }
@@ -255,11 +253,7 @@ func TestWithConfigSuccess(t *testing.T) {
 		t.Fatalf("Error getting identity config: %s", err)
 	}
 
-	client1, err := identityConfig.Client()
-	if err != nil {
-		t.Fatalf("Error getting client from config: %s", err)
-	}
-
+	client1 := identityConfig.Client()
 	if client1.Organization != sdkValidClientOrg1 {
 		t.Fatalf("Unexpected org in config: %s", client1.Organization)
 	}
@@ -275,7 +269,7 @@ func TestWithConfigFailure(t *testing.T) {
 func TestBadConfigFile(t *testing.T) {
 	_, err := New(configImpl.FromFile("../../pkg/core/config/testdata/viper-test.yaml"))
 	if err == nil {
-		t.Fatalf("Expected error from New with bad config file")
+		t.Fatal("Expected error from New with bad config file")
 	}
 }
 
@@ -284,11 +278,10 @@ func TestWithConfigEndpoint(t *testing.T) {
 	c := configImpl.FromFile(sdkConfigFile)
 
 	np := &MockNetworkPeers{}
-	co := &MockChannelOrderers{}
 	// override EndpointConfig's NetworkConfig() function with np's and co's instances
-	sdk, err := New(c, WithConfigEndpoint(np, co))
+	sdk, err := New(c, WithEndpointConfig(np))
 	if err != nil {
-		t.Fatalf("Error inializing sdk WithConfigEndpoint: %s", err)
+		t.Fatalf("Error inializing sdk WithEndpointConfig: %s", err)
 	}
 
 	// TODO: configBackend always uses default EndpointConfig... need to expose the final endpointConfig (with opts/default functions)
@@ -308,33 +301,14 @@ func TestWithConfigEndpoint(t *testing.T) {
 	//}
 	// will always use the default implementation for the set configBackend
 	// for the purpose of this test, we're getting endpointConfig from opts directly as we have overridden
-	// some functions by calling WithConfigEndpoint(np, mo) above
+	// some functions by calling WithEndpointConfig(np, mo) above
 	endpointConfig := sdk.opts.endpointConfig
 
-	network, err := endpointConfig.NetworkPeers()
-	if err != nil {
-		t.Fatalf("Error getting NetworkPeer from config: %s", err)
-	}
-	expectedNetwork, err := np.NetworkPeers()
-	if err != nil {
-		t.Fatalf("Error getting extecd NetworkPeer from direct config: %s", err)
-	}
+	network := endpointConfig.NetworkPeers()
+	expectedNetwork := np.NetworkPeers()
 	if !reflect.DeepEqual(network, expectedNetwork) {
-		t.Fatalf("Expected NetworkPeer was not returned by the sdk's config. Expected: %s, Received: %s", expectedNetwork, network)
+		t.Fatalf("Expected NetworkPeer was not returned by the sdk's config. Expected: %v, Received: %v", expectedNetwork, network)
 	}
-
-	channelOrderers, err := endpointConfig.ChannelOrderers("")
-	if err != nil {
-		t.Fatalf("Error getting ChannelOrderers from config: %s", err)
-	}
-	expectedChannelOrderers, err := co.ChannelOrderers("")
-	if err != nil {
-		t.Fatalf("Error getting extecd ChannelOrderers from direct config: %s", err)
-	}
-	if !reflect.DeepEqual(channelOrderers, expectedChannelOrderers) {
-		t.Fatalf("Expected ChannelOrderers was not returned by the sdk's config. Expected: %s, Received: %s", expectedChannelOrderers, channelOrderers)
-	}
-
 }
 
 func TestWithConfigEndpointAndBadOpt(t *testing.T) {
@@ -345,20 +319,20 @@ func TestWithConfigEndpointAndBadOpt(t *testing.T) {
 
 	var badOpt interface{}
 	// test bad opt
-	_, err := New(c, WithConfigEndpoint(np, co, badOpt))
+	_, err := New(c, WithEndpointConfig(np, co, badOpt))
 	if err == nil {
-		t.Fatal("expected empty endpointConfig during inializing sdk WithConfigEndpoint with a bad option but got no error")
+		t.Fatal("expected empty endpointConfig during inializing sdk WithEndpointConfig with a bad option but got no error")
 	}
 }
 
 type MockNetworkPeers struct{}
 
-func (M *MockNetworkPeers) NetworkPeers() ([]fab.NetworkPeer, error) {
-	return []fab.NetworkPeer{{PeerConfig: fab.PeerConfig{URL: "p.com", EventURL: "event.p.com", GRPCOptions: nil, TLSCACerts: endpoint.TLSConfig{Path: "", Pem: ""}}, MSPID: ""}}, nil
+func (M *MockNetworkPeers) NetworkPeers() []fab.NetworkPeer {
+	return []fab.NetworkPeer{{PeerConfig: fab.PeerConfig{URL: "p.com"}, MSPID: ""}}
 }
 
 type MockChannelOrderers struct{}
 
-func (M *MockChannelOrderers) ChannelOrderers(name string) ([]fab.OrdererConfig, error) {
-	return []fab.OrdererConfig{}, nil
+func (M *MockChannelOrderers) ChannelOrderers(name string) []fab.OrdererConfig {
+	return []fab.OrdererConfig{}
 }

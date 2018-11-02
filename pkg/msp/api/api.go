@@ -21,6 +21,17 @@ type CAClient interface {
 	Reenroll(enrollmentID string) error
 	Register(request *RegistrationRequest) (string, error)
 	Revoke(request *RevocationRequest) (*RevocationResponse, error)
+	GetCAInfo() (*GetCAInfoResponse, error)
+	CreateIdentity(request *IdentityRequest) (*IdentityResponse, error)
+	GetIdentity(id, caname string) (*IdentityResponse, error)
+	ModifyIdentity(request *IdentityRequest) (*IdentityResponse, error)
+	RemoveIdentity(request *RemoveIdentityRequest) (*IdentityResponse, error)
+	GetAllIdentities(caname string) ([]*IdentityResponse, error)
+	GetAffiliation(affiliation, caname string) (*AffiliationResponse, error)
+	GetAllAffiliations(caname string) (*AffiliationResponse, error)
+	AddAffiliation(request *AffiliationRequest) (*AffiliationResponse, error)
+	ModifyAffiliation(request *ModifyAffiliationRequest) (*AffiliationResponse, error)
+	RemoveAffiliation(request *AffiliationRequest) (*AffiliationResponse, error)
 }
 
 // AttributeRequest is a request for an attribute.
@@ -88,4 +99,126 @@ type RevokedCert struct {
 	Serial string
 	// AKI of the revoked certificate
 	AKI string
+}
+
+// IdentityRequest represents the request to add/update identity to the fabric-ca-server
+type IdentityRequest struct {
+
+	// The enrollment ID which uniquely identifies an identity (required)
+	ID string
+
+	// The identity's affiliation (required)
+	Affiliation string
+
+	// Array of attributes to assign to the user
+	Attributes []Attribute
+
+	// Type of identity being registered (e.g. 'peer, app, user'). Default is 'user'.
+	Type string
+
+	// The maximum number of times the secret can be reused to enroll (default CA's Max Enrollment)
+	MaxEnrollments int
+
+	// The enrollment secret. If not provided, a random secret is generated.
+	Secret string
+
+	// Name of the CA to send the request to within the Fabric CA server (optional)
+	CAName string
+}
+
+// RemoveIdentityRequest represents the request to remove an existing identity from the
+// fabric-ca-server
+type RemoveIdentityRequest struct {
+
+	// The enrollment ID which uniquely identifies an identity
+	ID string
+
+	// Force delete
+	Force bool
+
+	// Name of the CA
+	CAName string
+}
+
+// IdentityResponse is the response from the any read/add/modify/remove identity call
+type IdentityResponse struct {
+
+	// The enrollment ID which uniquely identifies an identity
+	ID string
+
+	// The identity's affiliation
+	Affiliation string
+
+	// Array of attributes assigned to the user
+	Attributes []Attribute
+
+	// Type of identity (e.g. 'peer, app, user')
+	Type string
+
+	// The maximum number of times the secret can be reused to enroll
+	MaxEnrollments int
+
+	// The enrollment secret
+	Secret string
+
+	// Name of the CA
+	CAName string
+}
+
+// AffiliationRequest represents the request to add/remove affiliation to the fabric-ca-server
+type AffiliationRequest struct {
+	// Name of the affiliation
+	Name string
+
+	// Creates parent affiliations if they do not exist
+	Force bool
+
+	// Name of the CA
+	CAName string
+}
+
+// ModifyAffiliationRequest represents the request to modify an existing affiliation on the
+// fabric-ca-server
+type ModifyAffiliationRequest struct {
+	AffiliationRequest
+	// New name of the affiliation
+	NewName string
+}
+
+// AffiliationResponse contains the response for get, add, modify, and remove an affiliation
+type AffiliationResponse struct {
+	AffiliationInfo
+	CAName string
+}
+
+// AffiliationInfo contains the affiliation name, child affiliation info, and identities
+// associated with this affiliation.
+type AffiliationInfo struct {
+	Name         string
+	Affiliations []AffiliationInfo
+	Identities   []IdentityInfo
+}
+
+// IdentityInfo contains information about an identity
+type IdentityInfo struct {
+	ID             string
+	Type           string
+	Affiliation    string
+	Attributes     []Attribute
+	MaxEnrollments int
+}
+
+// GetCAInfoResponse is the response from the GetCAInfo call
+type GetCAInfoResponse struct {
+	// CAName is the name of the CA
+	CAName string
+	// CAChain is the PEM-encoded bytes of the fabric-ca-server's CA chain.
+	// The 1st element of the chain is the root CA cert
+	CAChain []byte
+	// Idemix issuer public key of the CA
+	IssuerPublicKey []byte
+	// Idemix issuer revocation public key of the CA
+	IssuerRevocationPublicKey []byte
+	// Version of the server
+	Version string
 }

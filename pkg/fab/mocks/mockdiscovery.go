@@ -7,8 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 package mocks
 
 import (
-	"github.com/pkg/errors"
-
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
 )
 
@@ -34,27 +32,14 @@ func NewMockDiscoveryProvider(err error, peers []fab.Peer) *MockStaticDiscoveryP
 	return &MockStaticDiscoveryProvider{Error: err, Peers: peers}
 }
 
-// CreateDiscoveryService return discovery service for specific channel
-func (dp *MockStaticDiscoveryProvider) CreateDiscoveryService(channelID string) (fab.DiscoveryService, error) {
-
-	if dp.customDiscoveryService != nil {
-		return dp.customDiscoveryService, nil
-	}
-
-	if channelID == "error" {
-		return nil, errors.New("Generate error when creating new discovery service")
-	}
-	return NewMockDiscoveryService(dp.Error, dp.Peers), nil
-}
-
 // CreateLocalDiscoveryService return local discovery service
-func (dp *MockStaticDiscoveryProvider) CreateLocalDiscoveryService() (fab.DiscoveryService, error) {
+func (dp *MockStaticDiscoveryProvider) CreateLocalDiscoveryService(mspID string) (fab.DiscoveryService, error) {
 
 	if dp.customDiscoveryService != nil {
 		return dp.customDiscoveryService, nil
 	}
 
-	return NewMockDiscoveryService(dp.Error, dp.Peers), nil
+	return NewMockDiscoveryService(dp.Error, dp.Peers...), nil
 }
 
 //SetCustomDiscoveryService sets custom discoveryService
@@ -63,7 +48,7 @@ func (dp *MockStaticDiscoveryProvider) SetCustomDiscoveryService(customDiscovery
 }
 
 //NewMockDiscoveryService returns a new MockStaticDiscoveryService
-func NewMockDiscoveryService(err error, peers []fab.Peer) *MockStaticDiscoveryService {
+func NewMockDiscoveryService(err error, peers ...fab.Peer) *MockStaticDiscoveryService {
 	return &MockStaticDiscoveryService{Error: err, Peers: peers}
 }
 

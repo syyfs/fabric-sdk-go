@@ -48,7 +48,7 @@ func TestTxProposalResponseFilter(t *testing.T) {
 
 	_, err := chClient.Query(Request{ChaincodeID: "testCC", Fcn: "invoke", Args: [][]byte{[]byte("query"), []byte("b")}})
 	if err == nil {
-		t.Fatalf("Should have failed for not success status")
+		t.Fatal("Should have failed for not success status")
 	}
 	statusError, ok := status.FromError(err)
 	assert.True(t, ok, "Expected status error")
@@ -62,7 +62,7 @@ func TestTxProposalResponseFilter(t *testing.T) {
 	chClient = setupChannelClient(peers, t)
 	_, err = chClient.Query(Request{ChaincodeID: "testCC", Fcn: "invoke", Args: [][]byte{[]byte("query"), []byte("b")}})
 	if err == nil {
-		t.Fatalf("Should have failed for not success status")
+		t.Fatal("Should have failed for not success status")
 	}
 	statusError, ok = status.FromError(err)
 	assert.True(t, ok, "Expected status error")
@@ -77,17 +77,17 @@ func TestQuery(t *testing.T) {
 
 	_, err := chClient.Query(Request{})
 	if err == nil {
-		t.Fatalf("Should have failed for empty query request")
+		t.Fatal("Should have failed for empty query request")
 	}
 
 	_, err = chClient.Query(Request{Fcn: "invoke", Args: [][]byte{[]byte("query"), []byte("b")}})
 	if err == nil {
-		t.Fatalf("Should have failed for empty chaincode ID")
+		t.Fatal("Should have failed for empty chaincode ID")
 	}
 
 	_, err = chClient.Query(Request{ChaincodeID: "testCC", Args: [][]byte{[]byte("query"), []byte("b")}})
 	if err == nil {
-		t.Fatalf("Should have failed for empty function")
+		t.Fatal("Should have failed for empty function")
 	}
 
 	response, err := chClient.Query(Request{ChaincodeID: "testCC", Fcn: "invoke", Args: [][]byte{[]byte("query"), []byte("b")}})
@@ -107,7 +107,7 @@ func TestQuery(t *testing.T) {
 	chClient = setupChannelClient([]fab.Peer{testPeer1, testPeer2}, t)
 	_, err = chClient.Query(Request{ChaincodeID: "testCC", Fcn: "invoke", Args: [][]byte{[]byte("query"), []byte("b")}})
 	if err == nil {
-		t.Fatalf("Should have failed")
+		t.Fatal("Should have failed")
 	}
 	s, ok := status.FromError(err)
 	assert.True(t, ok, "expected status error")
@@ -120,7 +120,7 @@ func TestQuerySelectionError(t *testing.T) {
 
 	_, err := chClient.Query(Request{ChaincodeID: "testCC", Fcn: "invoke", Args: [][]byte{[]byte("query"), []byte("b")}})
 	if err == nil {
-		t.Fatalf("Should have failed to query with error in selection.GetEndorsersFor ...")
+		t.Fatal("Should have failed to query with error in selection.GetEndorsersFor ...")
 	}
 }
 
@@ -182,14 +182,14 @@ func TestQueryWithNilTargets(t *testing.T) {
 	_, err := chClient.Query(Request{ChaincodeID: "testCC", Fcn: "invoke",
 		Args: [][]byte{[]byte("query"), []byte("b")}}, WithTargets(nil, nil))
 	if err == nil || !strings.Contains(err.Error(), "target is nil") {
-		t.Fatalf("Should have failed to invoke test cc due to nil target")
+		t.Fatal("Should have failed to invoke test cc due to nil target")
 	}
 
 	peers := []fab.Peer{fcmocks.NewMockPeer("Peer1", "http://peer1.com"), nil}
 	_, err = chClient.Query(Request{ChaincodeID: "testCC", Fcn: "invoke",
 		Args: [][]byte{[]byte("query"), []byte("b")}}, WithTargets(peers...))
 	if err == nil || !strings.Contains(err.Error(), "target is nil") {
-		t.Fatalf("Should have failed to invoke test cc due to nil target")
+		t.Fatal("Should have failed to invoke test cc due to nil target")
 	}
 }
 
@@ -198,17 +198,17 @@ func TestExecuteTx(t *testing.T) {
 
 	_, err := chClient.Execute(Request{})
 	if err == nil {
-		t.Fatalf("Should have failed for empty invoke request")
+		t.Fatal("Should have failed for empty invoke request")
 	}
 
 	_, err = chClient.Execute(Request{Fcn: "invoke", Args: [][]byte{[]byte("move"), []byte("a"), []byte("b"), []byte("1")}})
 	if err == nil {
-		t.Fatalf("Should have failed for empty chaincode ID")
+		t.Fatal("Should have failed for empty chaincode ID")
 	}
 
 	_, err = chClient.Execute(Request{ChaincodeID: "testCC", Args: [][]byte{[]byte("move"), []byte("a"), []byte("b"), []byte("1")}})
 	if err == nil {
-		t.Fatalf("Should have failed for empty function")
+		t.Fatal("Should have failed for empty function")
 	}
 
 	// Test return different payload
@@ -219,7 +219,7 @@ func TestExecuteTx(t *testing.T) {
 	chClient = setupChannelClient([]fab.Peer{testPeer1, testPeer2}, t)
 	_, err = chClient.Execute(Request{ChaincodeID: "testCC", Fcn: "invoke", Args: [][]byte{[]byte("move"), []byte("b")}})
 	if err == nil {
-		t.Fatalf("Should have failed")
+		t.Fatal("Should have failed")
 	}
 	s, ok := status.FromError(err)
 	assert.True(t, ok, "expected status error")
@@ -316,7 +316,7 @@ func TestExecuteTxSelectionError(t *testing.T) {
 	_, err := chClient.Execute(Request{ChaincodeID: "testCC", Fcn: "invoke",
 		Args: [][]byte{[]byte("move"), []byte("a"), []byte("b"), []byte("1")}})
 	if err == nil {
-		t.Fatalf("Should have failed to execute tx with error in selection.GetEndorserrsFor ...")
+		t.Fatal("Should have failed to execute tx with error in selection.GetEndorserrsFor ...")
 	}
 }
 
@@ -333,7 +333,7 @@ func TestRPCStatusErrorPropagation(t *testing.T) {
 
 	_, err := chClient.Query(Request{ChaincodeID: "testCC", Fcn: "invoke", Args: [][]byte{[]byte("query"), []byte("b")}})
 	if err == nil {
-		t.Fatalf("Should have failed for not success status")
+		t.Fatal("Should have failed for not success status")
 	}
 	statusError, ok := status.FromError(err)
 	assert.True(t, ok, "Expected status error")
@@ -433,6 +433,20 @@ func TestExecuteTxWithRetries(t *testing.T) {
 	assert.Equal(t, testResp, resp.Payload, "expected correct response")
 }
 
+func TestBeforeRetryOption(t *testing.T) {
+	testStatus := status.New(status.EndorserClientStatus, status.ConnectionFailed.ToInt32(), "test", nil)
+
+	testPeer1 := fcmocks.NewMockPeer("Peer1", "http://peer1.com")
+	testPeer1.Error = testStatus
+	chClient := setupChannelClient([]fab.Peer{testPeer1}, t)
+
+	var callbacks int
+
+	_, _ = chClient.Query(Request{ChaincodeID: "testCC", Fcn: "invoke", Args: [][]byte{[]byte("query"), []byte("b")}},
+		WithRetry(retry.DefaultChannelOpts), WithBeforeRetry(func(error) { callbacks++ }))
+	assert.Equal(t, retry.DefaultChannelOpts.Attempts, callbacks, "Expected callback on each attempt")
+}
+
 func TestMultiErrorPropogation(t *testing.T) {
 	testErr := fmt.Errorf("Test Error")
 
@@ -453,31 +467,19 @@ func TestMultiErrorPropogation(t *testing.T) {
 	assert.Equal(t, "Multiple errors occurred: \nTest Error\nTest Error", statusError.Message, "Expected multi error message")
 }
 
-type serviceInit interface {
-	Initialize(context context.Channel) error
-}
-
 func TestDiscoveryGreylist(t *testing.T) {
 
 	testPeer1 := fcmocks.NewMockPeer("Peer1", "http://peer1.com")
 	testPeer1.Error = status.New(status.EndorserClientStatus,
 		status.ConnectionFailed.ToInt32(), "test", []interface{}{testPeer1.URL()})
 
-	selectionProvider, err := staticselection.New(fcmocks.NewMockEndpointConfig())
-	assert.Nil(t, err, "Got error %s", err)
+	discoveryService := txnmocks.NewMockDiscoveryService(nil, testPeer1)
 
-	selectionService, err := selectionProvider.CreateSelectionService("mychannel")
-	assert.Nil(t, err, "Got error %s", err)
-
-	discoveryService, err := setupTestDiscovery(nil, []fab.Peer{testPeer1})
+	selectionService, err := staticselection.NewService(discoveryService)
 	assert.Nil(t, err, "Got error %s", err)
 
 	fabCtx := setupCustomTestContext(t, selectionService, discoveryService, nil)
 	ctx := createChannelContext(fabCtx, channelID)
-
-	channelCtx, err := ctx()
-	assert.Nil(t, err, "Got error %s", err)
-	selectionService.(serviceInit).Initialize(channelCtx)
 
 	chClient, err := New(ctx)
 	assert.Nil(t, err, "Got error %s", err)
@@ -547,42 +549,18 @@ func setupCustomTestContext(t *testing.T, selectionService fab.SelectionService,
 		Orderers:  orderers,
 	}
 
-	ctx.InfraProvider().(*fcmocks.MockInfraProvider).SetCustomTransactor(&transactor)
-
 	testChannelSvc, err := setupTestChannelService(ctx, orderers)
 	assert.Nil(t, err, "Got error %s", err)
 
-	//Modify for custom mockcore to test scenarios
-	selectionProvider := ctx.MockProviderContext.SelectionProvider()
-	selectionProvider.(*fcmocks.MockSelectionProvider).SetCustomSelectionService(selectionService)
+	mockChService := testChannelSvc.(*fcmocks.MockChannelService)
+	mockChService.SetTransactor(&transactor)
+	mockChService.SetDiscovery(discoveryService)
+	mockChService.SetSelection(selectionService)
 
 	channelProvider := ctx.MockProviderContext.ChannelProvider()
 	channelProvider.(*fcmocks.MockChannelProvider).SetCustomChannelService(testChannelSvc)
 
-	discoveryProvider := ctx.MockProviderContext.DiscoveryProvider()
-	discoveryProvider.(*fcmocks.MockStaticDiscoveryProvider).SetCustomDiscoveryService(discoveryService)
-
 	return createClientContext(ctx)
-}
-
-func setupTestDiscovery(discErr error, peers []fab.Peer) (fab.DiscoveryService, error) {
-
-	mockDiscovery, err := txnmocks.NewMockDiscoveryProvider(discErr, peers)
-	if err != nil {
-		return nil, errors.WithMessage(err, "NewMockDiscoveryProvider failed")
-	}
-
-	return mockDiscovery.CreateDiscoveryService("mychannel")
-}
-
-func setupTestSelection(discErr error, peers []fab.Peer) (*txnmocks.MockSelectionService, error) {
-
-	mockSelection, err := txnmocks.NewMockSelectionProvider(discErr, peers)
-	if err != nil {
-		return nil, errors.WithMessage(err, "NewMockSelectinProvider failed")
-	}
-
-	return mockSelection.CreateSelectionService("mychannel")
 }
 
 func setupChannelClient(peers []fab.Peer, t *testing.T) *Client {
@@ -592,17 +570,7 @@ func setupChannelClient(peers []fab.Peer, t *testing.T) *Client {
 
 func setupChannelClientWithError(discErr error, selectionErr error, peers []fab.Peer, t *testing.T) *Client {
 
-	discoveryService, err := setupTestDiscovery(discErr, nil)
-	if err != nil {
-		t.Fatalf("Failed to setup discovery service: %s", err)
-	}
-
-	selectionService, err := setupTestSelection(selectionErr, peers)
-	if err != nil {
-		t.Fatalf("Failed to setup discovery service: %s", err)
-	}
-
-	fabCtx := setupCustomTestContext(t, selectionService, discoveryService, nil)
+	fabCtx := setupCustomTestContext(t, txnmocks.NewMockSelectionService(selectionErr, peers...), txnmocks.NewMockDiscoveryService(discErr), nil)
 
 	ctx := createChannelContext(fabCtx, channelID)
 
@@ -617,13 +585,7 @@ func setupChannelClientWithError(discErr error, selectionErr error, peers []fab.
 func setupChannelClientWithNodes(peers []fab.Peer,
 	orderers []fab.Orderer, t *testing.T) *Client {
 
-	discoveryService, err := setupTestDiscovery(nil, nil)
-	assert.Nil(t, err, "Failed to setup discovery service")
-
-	selectionService, err := setupTestSelection(nil, peers)
-	assert.Nil(t, err, "Failed to setup discovery service")
-
-	fabCtx := setupCustomTestContext(t, selectionService, discoveryService, orderers)
+	fabCtx := setupCustomTestContext(t, txnmocks.NewMockSelectionService(nil, peers...), txnmocks.NewMockDiscoveryService(nil), orderers)
 
 	ctx := createChannelContext(fabCtx, channelID)
 

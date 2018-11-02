@@ -10,7 +10,6 @@ import (
 	reqContext "context"
 	"crypto/x509"
 	"fmt"
-	"net"
 	"reflect"
 	"testing"
 	"time"
@@ -51,7 +50,7 @@ func TestNewPeerEndorserTLS(t *testing.T) {
 	conn, err := newPeerEndorser(getPeerEndorserRequest(url, mockfab.GoodCert, "", config, kap, false, false))
 
 	if err != nil {
-		t.Fatalf("Peer conn should be constructed")
+		t.Fatal("Peer conn should be constructed")
 	}
 
 	optInsecure := reflect.ValueOf(grpc.WithInsecure())
@@ -59,7 +58,7 @@ func TestNewPeerEndorserTLS(t *testing.T) {
 	for _, opt := range conn.grpcDialOption {
 		optr := reflect.ValueOf(opt)
 		if optr.Pointer() == optInsecure.Pointer() {
-			t.Fatalf("TLS enabled - insecure not allowed")
+			t.Fatal("TLS enabled - insecure not allowed")
 		}
 	}
 }
@@ -83,7 +82,7 @@ func TestNewPeerEndorserMutualTLS(t *testing.T) {
 	conn, err := newPeerEndorser(getPeerEndorserRequest(url, mockfab.GoodCert, "", config, kap, false, false))
 
 	if err != nil {
-		t.Fatalf("Peer conn should be constructed: %v", err)
+		t.Fatalf("Peer conn should be constructed: %s", err)
 	}
 
 	optInsecure := reflect.ValueOf(grpc.WithInsecure())
@@ -91,7 +90,7 @@ func TestNewPeerEndorserMutualTLS(t *testing.T) {
 	for _, opt := range conn.grpcDialOption {
 		optr := reflect.ValueOf(opt)
 		if optr.Pointer() == optInsecure.Pointer() {
-			t.Fatalf("TLS enabled - insecure not allowed")
+			t.Fatal("TLS enabled - insecure not allowed")
 		}
 	}
 }
@@ -105,7 +104,7 @@ func TestNewPeerEndorserMutualTLSNoClientCerts(t *testing.T) {
 	url := "grpcs://0.0.0.0:1234"
 	_, err := newPeerEndorser(getPeerEndorserRequest(url, mockfab.GoodCert, "", config, kap, false, false))
 	if err != nil {
-		t.Fatalf("Peer conn should be constructed: %v", err)
+		t.Fatalf("Peer conn should be constructed: %s", err)
 	}
 }
 
@@ -115,12 +114,12 @@ func TestNewPeerEndorserTLSBadPool(t *testing.T) {
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
 
-	config := mockfab.DefaultMockConfig(mockCtrl)
+	config := mockfab.BadTLSClientMockConfig(mockCtrl)
 
 	url := "grpcs://0.0.0.0:1234"
 	_, err := newPeerEndorser(getPeerEndorserRequest(url, mockfab.BadCert, "", config, kap, false, false))
 	if err == nil {
-		t.Fatalf("Peer conn construction should have failed")
+		t.Fatal("Peer conn construction should have failed")
 	}
 }
 
@@ -134,21 +133,21 @@ func TestNewPeerEndorserSecured(t *testing.T) {
 	url := "grpc://0.0.0.0:1234"
 	_, err := newPeerEndorser(getPeerEndorserRequest(url, nil, "", config, kap, false, false))
 	if err != nil {
-		t.Fatalf("Peer conn should be constructed")
+		t.Fatal("Peer conn should be constructed")
 	}
 
 	url = "grpcs://0.0.0.0:1234"
 
 	_, err = newPeerEndorser(getPeerEndorserRequest(url, nil, "", config, kap, false, true))
 	if err != nil {
-		t.Fatalf("Peer conn should be constructed")
+		t.Fatal("Peer conn should be constructed")
 	}
 
 	url = "0.0.0.0:1234"
 
 	_, err = newPeerEndorser(getPeerEndorserRequest(url, nil, "", config, kap, false, true))
 	if err != nil {
-		t.Fatalf("Peer conn should be constructed")
+		t.Fatal("Peer conn should be constructed")
 	}
 
 }
@@ -164,7 +163,7 @@ func TestNewPeerEndorserBadParams(t *testing.T) {
 	url := ""
 	_, err := newPeerEndorser(getPeerEndorserRequest(url, nil, "", config, kap, false, false))
 	if err == nil {
-		t.Fatalf("Peer conn should not be constructed - bad params")
+		t.Fatal("Peer conn should not be constructed - bad params")
 	}
 }
 
@@ -176,7 +175,7 @@ func TestNewPeerEndorserTLSBad(t *testing.T) {
 
 	_, err := newPeerEndorser(getPeerEndorserRequest(url, nil, "", config, kap, false, false))
 	if err == nil {
-		t.Fatalf("Peer conn should not be constructed - bad cert pool")
+		t.Fatal("Peer conn should not be constructed - bad cert pool")
 	}
 }
 
@@ -185,20 +184,20 @@ func TestNewPeerEndorserTLSBad(t *testing.T) {
 func TestProcessProposalBadDial(t *testing.T) {
 	_, err := testProcessProposal(t, "grpc://"+testAddress)
 	if err == nil {
-		t.Fatalf("Process proposal should have failed")
+		t.Fatal("Process proposal should have failed")
 	}
 }
 
 // TestProcessProposalGoodDial validates that an up
 // endorser connects.
 func TestProcessProposalGoodDial(t *testing.T) {
-	grpcServer := grpc.NewServer()
-	defer grpcServer.Stop()
-	_, addr := startEndorserServer(t, grpcServer)
+	srv := &mocks.MockEndorserServer{}
+	addr := srv.Start(testAddress)
+	defer srv.Stop()
 
 	_, err := testProcessProposal(t, "grpc://"+addr)
 	if err != nil {
-		t.Fatalf("Process proposal failed (%v)", err)
+		t.Fatalf("Process proposal failed (%s)", err)
 	}
 }
 
@@ -210,7 +209,7 @@ func testProcessProposal(t *testing.T, url string) (*fab.TransactionProposalResp
 
 	conn, err := newPeerEndorser(getPeerEndorserRequest(url, nil, "", config, kap, false, true))
 	if err != nil {
-		t.Fatalf("Peer conn construction error (%v)", err)
+		t.Fatalf("Peer conn construction error (%s)", err)
 	}
 
 	ctx, cancel := reqContext.WithTimeout(reqContext.Background(), normalTimeout)
@@ -239,25 +238,6 @@ func mockProcessProposalRequest() fab.ProcessProposalRequest {
 	}
 }
 
-func startEndorserServer(t *testing.T, grpcServer *grpc.Server) (*mocks.MockEndorserServer, string) {
-	return startEndorserServerWithError(t, grpcServer, nil)
-}
-
-func startEndorserServerWithError(t *testing.T, grpcServer *grpc.Server, testErr error) (*mocks.MockEndorserServer, string) {
-	lis, err := net.Listen("tcp", testAddress)
-	addr := lis.Addr().String()
-
-	endorserServer := &mocks.MockEndorserServer{ProposalError: testErr}
-	pb.RegisterEndorserServer(grpcServer, endorserServer)
-	if err != nil {
-		t.Logf("Error starting test server %s", err)
-		t.FailNow()
-	}
-	t.Logf("Starting test server (endorser server in peerendorser_test) on %s", addr)
-	go grpcServer.Serve(lis)
-	return endorserServer, addr
-}
-
 func TestEndorserConnectionError(t *testing.T) {
 	_, err := testProcessProposal(t, "grpc://"+testAddress)
 	assert.NotNil(t, err, "Expected connection error without server running")
@@ -271,9 +251,9 @@ func TestEndorserConnectionError(t *testing.T) {
 func TestEndorserRPCError(t *testing.T) {
 	testErrorMessage := "RPC error condition"
 
-	grpcServer := grpc.NewServer()
-	defer grpcServer.Stop()
-	_, addr := startEndorserServerWithError(t, grpcServer, fmt.Errorf(testErrorMessage))
+	srv := &mocks.MockEndorserServer{ProposalError: fmt.Errorf(testErrorMessage)}
+	addr := srv.Start(testAddress)
+	defer srv.Stop()
 
 	_, err := testProcessProposal(t, "grpc://"+addr)
 	statusError, ok := status.FromError(err)
@@ -290,14 +270,15 @@ func TestExtractChainCodeError(t *testing.T) {
 	error := grpcstatus.New(grpcCodes.Unknown, expectedMsg)
 	code, message, _ := extractChaincodeError(error)
 	if code != 500 {
-		t.Fatalf("Expected code to be 500")
+		t.Fatal("Expected code to be 500")
 	}
 	if message != "Invalid function (dummy) call" {
-		t.Fatalf("Expected message not found")
+		t.Fatal("Expected message not found")
 	}
 }
 
 func TestExtractPrematureExecError(t *testing.T) {
+
 	err := grpcstatus.New(grpcCodes.Unknown, "some error")
 	_, _, e := extractPrematureExecutionError(err)
 	assert.EqualError(t, e, "not a premature execution error")
@@ -311,4 +292,135 @@ func TestExtractPrematureExecError(t *testing.T) {
 	code, message, _ = extractPrematureExecutionError(err)
 	assert.EqualValues(t, int32(status.PrematureChaincodeExecution), code, "Expected premature execution error")
 	assert.EqualValues(t, "premature execution - chaincode (somecc:v1) launched and waiting for registration", message, "Invalid message")
+}
+
+func TestExtractChaincodeAlreadyLaunchingError(t *testing.T) {
+
+	err := grpcstatus.New(grpcCodes.Unknown, "some error")
+	_, _, e := extractChaincodeAlreadyLaunchingError(err)
+	assert.EqualError(t, e, "not a chaincode already launching error")
+
+	err = grpcstatus.New(grpcCodes.Unknown, "error executing chaincode: error chaincode is already launching: somecc:v1")
+	code, message, extractErr := extractChaincodeAlreadyLaunchingError(err)
+	assert.EqualValues(t, int32(status.ChaincodeAlreadyLaunching), code, "Expected chaincode already launching error")
+	assert.EqualValues(t, "error chaincode is already launching: somecc:v1", message, "Invalid message")
+	assert.Nil(t, extractErr)
+
+	err = grpcstatus.New(grpcCodes.Unknown, "error executing chaincode: some random error: somecc:v1")
+	code, message, extractErr = extractChaincodeAlreadyLaunchingError(err)
+	assert.NotNil(t, extractErr)
+	assert.EqualValues(t, 0, code)
+	assert.Empty(t, message)
+
+}
+
+func TestExtractChaincodeNameNotFoundError(t *testing.T) {
+
+	err := grpcstatus.New(grpcCodes.Unknown, "some error")
+	_, _, e := extractChaincodeNameNotFoundError(err)
+	assert.EqualError(t, e, "not a 'could not find chaincode with name' error")
+
+	err = grpcstatus.New(grpcCodes.Unknown, "make sure the chaincode uq7q9y7lu7 has been successfully instantiated and try again: getccdata mychannel/uq7q9y7lu7 responded with error: could not find chaincode with name 'uq7q9y7lu7'")
+	code, message, extractErr := extractChaincodeNameNotFoundError(err)
+	assert.EqualValues(t, int32(status.ChaincodeNameNotFound), code, "Expected chaincode name not found error")
+	assert.EqualValues(t, "could not find chaincode with name 'uq7q9y7lu7'", message, "Invalid message")
+	assert.Nil(t, extractErr)
+
+	err = grpcstatus.New(grpcCodes.Unknown, "cannot get package for chaincode (vl5knffa37:v0)")
+	code, message, extractErr = extractChaincodeNameNotFoundError(err)
+	assert.EqualValues(t, int32(status.ChaincodeNameNotFound), code, "Expected chaincode name not found error")
+	assert.EqualValues(t, "cannot get package for chaincode (vl5knffa37:v0)", message, "Invalid message")
+	assert.Nil(t, extractErr)
+
+	err = grpcstatus.New(grpcCodes.Unknown, "error executing chaincode: some random error: somecc:v1")
+	code, message, extractErr = extractChaincodeNameNotFoundError(err)
+	assert.NotNil(t, extractErr)
+	assert.EqualValues(t, 0, code)
+	assert.Empty(t, message)
+
+}
+
+func TestChaincodeStatusFromResponse(t *testing.T) {
+	//For error response
+	response := &pb.ProposalResponse{
+		Response: &pb.Response{Status: 500, Payload: []byte("Unknown function"), Message: "Chaincode error"},
+	}
+	err := extractChaincodeErrorFromResponse(response)
+	s, ok := status.FromError(err)
+	assert.True(t, ok)
+	assert.Equal(t, "Chaincode error", s.Message)
+	assert.Equal(t, int32(500), s.Code)
+	assert.Equal(t, status.ChaincodeStatus, s.Group)
+	assert.Equal(t, []byte("Unknown function"), s.Details[1])
+
+	//For successful response 200
+	response = &pb.ProposalResponse{
+		Response: &pb.Response{Status: 200, Payload: []byte("TEST"), Message: "Success"},
+	}
+	err = extractChaincodeErrorFromResponse(response)
+	assert.True(t, ok)
+	assert.Nil(t, err)
+
+	//For successful response 201
+	response = &pb.ProposalResponse{
+		Response: &pb.Response{Status: 201, Payload: []byte("TEST"), Message: "Success"},
+	}
+	err = extractChaincodeErrorFromResponse(response)
+	assert.True(t, ok)
+	assert.Nil(t, err)
+
+	//For error response - premature execution
+	response = &pb.ProposalResponse{
+		Response: &pb.Response{Status: 500, Payload: []byte("Unknown Description"), Message: "transaction returned with failure: premature execution - chaincode (somecc:v1) is being launched"},
+	}
+	err = extractChaincodeErrorFromResponse(response)
+	s, ok = status.FromError(err)
+	assert.True(t, ok)
+	assert.Equal(t, "transaction returned with failure: premature execution - chaincode (somecc:v1) is being launched", s.Message)
+	assert.Equal(t, int32(status.PrematureChaincodeExecution), s.Code)
+	assert.Equal(t, status.EndorserClientStatus, s.Group)
+
+	//For error response -  premature execution
+	response = &pb.ProposalResponse{
+		Response: &pb.Response{Status: 500, Payload: []byte("Unknown Description"), Message: "transaction returned with failure: premature execution - chaincode (somecc:v1) is being launched"},
+	}
+	err = extractChaincodeErrorFromResponse(response)
+	s, ok = status.FromError(err)
+	assert.True(t, ok)
+	assert.Equal(t, "transaction returned with failure: premature execution - chaincode (somecc:v1) is being launched", s.Message)
+	assert.Equal(t, int32(status.PrematureChaincodeExecution), s.Code)
+	assert.Equal(t, status.EndorserClientStatus, s.Group)
+
+	//For error response - chaincode already launching
+	response = &pb.ProposalResponse{
+		Response: &pb.Response{Status: 500, Payload: []byte("Unknown Description"), Message: "error executing chaincode: error chaincode is already launching: somecc:v1"},
+	}
+	err = extractChaincodeErrorFromResponse(response)
+	s, ok = status.FromError(err)
+	assert.True(t, ok)
+	assert.Equal(t, "error executing chaincode: error chaincode is already launching: somecc:v1", s.Message)
+	assert.Equal(t, int32(status.ChaincodeAlreadyLaunching), s.Code)
+	assert.Equal(t, status.EndorserClientStatus, s.Group)
+
+	//For error response - chaincode name not found
+	response = &pb.ProposalResponse{
+		Response: &pb.Response{Status: 500, Payload: []byte("Unknown Description"), Message: "make sure the chaincode uq7q9y7lu7 has been successfully instantiated and try again: getccdata mychannel/uq7q9y7lu7 responded with error: could not find chaincode with name 'uq7q9y7lu7'"},
+	}
+	err = extractChaincodeErrorFromResponse(response)
+	s, ok = status.FromError(err)
+	assert.True(t, ok)
+	assert.Equal(t, "make sure the chaincode uq7q9y7lu7 has been successfully instantiated and try again: getccdata mychannel/uq7q9y7lu7 responded with error: could not find chaincode with name 'uq7q9y7lu7'", s.Message)
+	assert.Equal(t, int32(status.ChaincodeNameNotFound), s.Code)
+	assert.Equal(t, status.EndorserClientStatus, s.Group)
+
+	//For error response - chaincode package not found
+	response = &pb.ProposalResponse{
+		Response: &pb.Response{Status: 500, Payload: []byte("Unknown Description"), Message: "cannot get package for chaincode (vl5knffa37:v0)"},
+	}
+	err = extractChaincodeErrorFromResponse(response)
+	s, ok = status.FromError(err)
+	assert.True(t, ok)
+	assert.Equal(t, "cannot get package for chaincode (vl5knffa37:v0)", s.Message)
+	assert.Equal(t, int32(status.ChaincodeNameNotFound), s.Code)
+	assert.Equal(t, status.EndorserClientStatus, s.Group)
 }

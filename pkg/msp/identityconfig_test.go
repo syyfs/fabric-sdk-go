@@ -7,16 +7,21 @@ SPDX-License-Identifier: Apache-2.0
 package msp
 
 import (
+	"crypto/x509"
 	"testing"
 
 	"os"
 	"strings"
 
+	"encoding/pem"
+
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/core"
+	fabImpl "github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
 	"github.com/hyperledger/fabric-sdk-go/pkg/core/config"
 	"github.com/hyperledger/fabric-sdk-go/pkg/core/config/endpoint"
 	"github.com/hyperledger/fabric-sdk-go/pkg/core/mocks"
-	"github.com/hyperledger/fabric-sdk-go/pkg/util/pathvar"
+	"github.com/hyperledger/fabric-sdk-go/pkg/fab"
+	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 )
@@ -35,7 +40,7 @@ func TestCAConfigFailsByNetworkConfig(t *testing.T) {
 
 	configBackends, err := config.FromFile(configTestFilePath)()
 	if err != nil {
-		t.Fatalf("Unexpected error reading config: %v", err)
+		t.Fatalf("Unexpected error reading config: %s", err)
 	}
 	if len(configBackends) != 1 {
 		t.Fatalf("expected 1 backend but got %d", len(configBackends))
@@ -55,30 +60,21 @@ func TestCAConfigFailsByNetworkConfig(t *testing.T) {
 
 	identityCfg, err := ConfigFromBackend(customBackend)
 	if err != nil {
-		t.Fatalf("Unexpected error initializing endpoint config: %v", err)
+		t.Fatalf("Unexpected error initializing endpoint config: %s", err)
 	}
 
 	sampleIdentityConfig := identityCfg.(*IdentityConfig)
-	sampleIdentityConfig.endpointConfig.ResetNetworkConfig()
-
-	customBackend.KeyValueMap["channels"] = "INVALID"
-	_, err = sampleIdentityConfig.networkConfig()
-	if err == nil {
-		t.Fatal("Network config load supposed to fail")
-	}
-
-	customBackend.KeyValueMap["channels"], _ = configBackend.Lookup("channels")
 	customBackend.KeyValueMap["certificateAuthorities"] = ""
 
 	//Test CA client cert file failure scenario
-	certfile, err := sampleIdentityConfig.CAClientCert("peerorg1")
-	if certfile != nil || err == nil {
+	certfile, ok := sampleIdentityConfig.CAClientCert("peerorg1")
+	if certfile != nil || ok {
 		t.Fatal("CA Cert file location read supposed to fail")
 	}
 
 	//Test CA client cert file failure scenario
-	keyFile, err := sampleIdentityConfig.CAClientKey("peerorg1")
-	if keyFile != nil || err == nil {
+	keyFile, ok := sampleIdentityConfig.CAClientKey("peerorg1")
+	if keyFile != nil || ok {
 		t.Fatal("CA Key file location read supposed to fail")
 	}
 
@@ -91,15 +87,15 @@ func TestCAConfigFailsByNetworkConfig(t *testing.T) {
 }
 
 func testCAServerCertFailureScenario(sampleIdentityConfig *IdentityConfig, t *testing.T) {
-	sCertFiles, err := sampleIdentityConfig.CAServerCerts("peerorg1")
-	if len(sCertFiles) > 0 || err == nil {
+	sCertFiles, ok := sampleIdentityConfig.CAServerCerts("peerorg1")
+	if len(sCertFiles) > 0 || ok {
 		t.Fatal("Getting CA server cert files supposed to fail")
 	}
 }
 
 func testCAConfigFailureScenario(sampleIdentityConfig *IdentityConfig, t *testing.T) {
-	caConfig, err := sampleIdentityConfig.CAConfig("peerorg1")
-	if caConfig != nil || err == nil {
+	caConfig, ok := sampleIdentityConfig.CAConfig("peerorg1")
+	if caConfig != nil || ok {
 		t.Fatal("Get CA Config supposed to fail")
 	}
 }
@@ -112,48 +108,46 @@ func TestTLSCAConfigFromPems(t *testing.T) {
 
 	//Test TLSCA Cert Pool (Positive test case)
 	config, err := ConfigFromBackend(embeddedBackend...)
-	if err != nil {
-		t.Fatalf("Failed to initialize identity config , reason: %v", err)
-	}
+	assert.Nil(t, err, "Failed to initialize identity config , reason: %s", err)
+	endpointConfig, err := fab.ConfigFromBackend(embeddedBackend...)
+	assert.Nil(t, err, "Failed to initialize endpoint config , reason: %s", err)
 
 	identityConfig := config.(*IdentityConfig)
 	certPem, _ := identityConfig.CAClientCert(org1)
 	certConfig := endpoint.TLSConfig{Pem: string(certPem)}
 
-	cert, err := certConfig.TLSCert()
+	err = certConfig.LoadBytes()
+	assert.Nil(t, err, "TLS CA cert parse failed, reason: %s", err)
 
-	if err != nil {
-		t.Fatalf("TLS CA cert parse failed, reason: %v", err)
-	}
+	cert, ok, err := certConfig.TLSCert()
+	assert.Nil(t, err, "TLS CA cert parse failed, reason: %s", err)
+	assert.True(t, ok, "TLS CA cert parse failed")
 
-	_, err = identityConfig.endpointConfig.TLSCACertPool(cert)
-
-	if err != nil {
-		t.Fatalf("TLS CA cert pool fetch failed, reason: %v", err)
-	}
+	endpointConfig.TLSCACertPool().Add(cert)
+	_, err = endpointConfig.TLSCACertPool().Get()
+	assert.Nil(t, err, "TLS CA cert pool fetch failed, reason: %s", err)
 	//Test TLSCA Cert Pool (Negative test case)
 
 	badCertConfig := endpoint.TLSConfig{Pem: "some random invalid pem"}
+	err = badCertConfig.LoadBytes()
+	assert.Nil(t, err, "LoadBytes should not fail for bad pemgit g")
 
-	badCert, err := badCertConfig.TLSCert()
+	badCert, ok, err := badCertConfig.TLSCert()
+	assert.Nil(t, err, "TLS CA cert parse was supposed to fail")
+	assert.False(t, ok, "TLS CA cert parse was supposed to fail")
 
-	if err == nil {
-		t.Fatalf("TLS CA cert parse was supposed to fail")
-	}
+	endpointConfig.TLSCACertPool().Add(badCert)
+	_, err = endpointConfig.TLSCACertPool().Get()
+	assert.Nil(t, err, "TLSCACertPool failed %s", err)
 
-	_, err = identityConfig.endpointConfig.TLSCACertPool(badCert)
-	if err != nil {
-		t.Fatalf("TLSCACertPool failed %v", err)
-	}
-
-	keyPem, _ := identityConfig.CAClientKey(org1)
+	keyPem, ok := identityConfig.CAClientKey(org1)
+	assert.True(t, ok, "CAClientKey supposed to succeed")
 
 	keyConfig := endpoint.TLSConfig{Pem: string(keyPem)}
 
-	_, err = keyConfig.TLSCert()
-	if err == nil {
-		t.Fatalf("TLS CA cert pool was supposed to fail when provided with wrong cert file")
-	}
+	_, ok, err = keyConfig.TLSCert()
+	assert.Nil(t, err, "TLS CA cert pool was supposed to fail when provided with wrong cert file")
+	assert.False(t, ok, "TLS CA cert pool was supposed to fail when provided with wrong cert file")
 
 }
 
@@ -172,18 +166,18 @@ func TestInitConfigFromRawWithPem(t *testing.T) {
 
 	config, err := ConfigFromBackend(backend...)
 	if err != nil {
-		t.Fatalf("Failed to initialize config from bytes array. Error: %s", err)
+		t.Fatalf("Failed to initialize identity config from bytes array. Error: %s", err)
+	}
+	endpointConfig, err := fab.ConfigFromBackend(backend...)
+	if err != nil {
+		t.Fatalf("Failed to initialize endpoint config from bytes array. Error: %s", err)
 	}
 
 	idConfig := config.(*IdentityConfig)
 
-	o, err := idConfig.endpointConfig.OrderersConfig()
-	if err != nil {
-		t.Fatalf("Failed to load orderers from config. Error: %s", err)
-	}
-
+	o := endpointConfig.OrderersConfig()
 	if len(o) == 0 {
-		t.Fatalf("orderer cannot be nil or empty")
+		t.Fatal("orderer cannot be nil or empty")
 	}
 
 	oPem := `-----BEGIN CERTIFICATE-----
@@ -200,20 +194,17 @@ Af8EBTADAQH/MCkGA1UdDgQiBCBxaEP3nVHQx4r7tC+WO//vrPRM1t86SKN0s6XB
 8LWbHTAKBggqhkjOPQQDAgNIADBFAiEA96HXwCsuMr7tti8lpcv1oVnXg0FlTxR/
 SQtE5YgdxkUCIHReNWh/pluHTxeGu2jNCH1eh6o2ajSGeeizoapvdJbN
 -----END CERTIFICATE-----`
-	loadedOPem := strings.TrimSpace(o[0].TLSCACerts.Pem) // viper's unmarshall adds a \n to the end of a string, hence the TrimeSpace
-	if loadedOPem != oPem {
-		t.Fatalf("Orderer Pem doesn't match. Expected \n'%s'\n, but got \n'%s'\n", oPem, loadedOPem)
-	}
 
-	pc, err := idConfig.endpointConfig.PeersConfig(org1)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
-	if len(pc) == 0 {
-		t.Fatalf("peers list of %s cannot be nil or empty", org1)
-	}
+	oCert, err := tlsCertByBytes([]byte(oPem))
+	assert.Nil(t, err, "failed to cert from pem bytes")
+	assert.Equal(t, oCert.RawSubject, o[0].TLSCACert.RawSubject, "certs supposed to match")
+
+	pc, ok := endpointConfig.PeersConfig(org1)
+	assert.True(t, ok)
+	assert.NotEmpty(t, pc, "peers list cannot be nil or empty")
+
 	peer0 := "peer0.org1.example.com"
-	checkPeerPem(org1, idConfig, peer0, t)
+	checkPeerPem(org1, endpointConfig, peer0, t)
 
 	// get CA Server cert pems (embedded) for org1
 	checkCAServerCerts("org1", idConfig, t)
@@ -234,14 +225,11 @@ SQtE5YgdxkUCIHReNWh/pluHTxeGu2jNCH1eh6o2ajSGeeizoapvdJbN
 	checkClientKey(idConfig, "org1", t)
 }
 
-func checkPeerPem(org string, idConfig *IdentityConfig, peer string, t *testing.T) {
-	p0, err := idConfig.endpointConfig.PeerConfig(peer)
-	if err != nil {
-		t.Fatalf("Failed to load %s of %s from the config. Error: %s", peer, org, err)
-	}
-	if p0 == nil {
-		t.Fatalf("%s of %s cannot be nil", peer, org)
-	}
+func checkPeerPem(org string, endpointConfig fabImpl.EndpointConfig, peer string, t *testing.T) {
+	p0, ok := endpointConfig.PeerConfig(peer)
+	assert.True(t, ok)
+	assert.NotNil(t, p0, "cannot be nil")
+
 	pPem := `-----BEGIN CERTIFICATE-----
 MIICSTCCAfCgAwIBAgIRAPQIzfkrCZjcpGwVhMSKd0AwCgYIKoZIzj0EAwIwdjEL
 MAkGA1UEBhMCVVMxEzARBgNVBAgTCkNhbGlmb3JuaWExFjAUBgNVBAcTDVNhbiBG
@@ -257,37 +245,29 @@ V842OVjxCYYQwCjPIY+5e9ORR+8pxVzcMAoGCCqGSM49BAMCA0cAMEQCIGZ+KTfS
 eezqv0ml1VeQEmnAEt5sJ2RJA58+LegUYMd6AiAfEe6BKqdY03qFUgEYmtKG+3Dr
 O94CDp7l2k7hMQI0zQ==
 -----END CERTIFICATE-----`
-	loadedPPem := strings.TrimSpace(p0.TLSCACerts.Pem)
-	// viper's unmarshall adds a \n to the end of a string, hence the TrimeSpace
-	if loadedPPem != pPem {
-		t.Fatalf("%s Pem doesn't match. Expected \n'%s'\n, but got \n'%s'\n", peer, pPem, loadedPPem)
-	}
+
+	oCert, err := tlsCertByBytes([]byte(pPem))
+	assert.Nil(t, err, "failed to cert from pem bytes")
+	assert.Equal(t, oCert.RawSubject, p0.TLSCACert.RawSubject, "certs supposed to match")
+
 }
 
 func checkCAServerCerts(org string, idConfig *IdentityConfig, t *testing.T) {
-	certs, err := idConfig.CAServerCerts(org)
-	if err != nil {
-		t.Fatalf("Failed to load CAServerCertPems from config. Error: %s", err)
-	}
-	if len(certs) == 0 {
-		t.Fatalf("Got empty PEM certs for CAServerCertPems")
-	}
+	certs, ok := idConfig.CAServerCerts(org)
+	assert.True(t, ok, "Failed to load CAServerCertPems from config.")
+	assert.NotEmpty(t, certs, "Got empty PEM certs for CAServerCertPems")
 }
 
 func checkClientCert(idConfig *IdentityConfig, org string, t *testing.T) {
-	cert, err := idConfig.CAClientCert(org)
-	if err != nil {
-		t.Fatalf("Failed to load CAClientCertPem from config. Error: %s", err)
-	}
-	assert.True(t, len(cert) > 0, "Invalid cert")
+	cert, ok := idConfig.CAClientCert(org)
+	assert.True(t, ok, "Failed to load CAClientCertPem from config.")
+	assert.NotEmpty(t, cert, "Invalid cert")
 }
 
 func checkClientKey(idConfig *IdentityConfig, org string, t *testing.T) {
-	key, err := idConfig.CAClientKey(org)
-	if err != nil {
-		t.Fatalf("Failed to load CAClientKeyPem from config. Error: %s", err)
-	}
-	assert.True(t, len(key) > 0, "Invalid key")
+	key, ok := idConfig.CAClientKey(org)
+	assert.True(t, ok, "Failed to load CAClientKeyPem from config.")
+	assert.NotEmpty(t, key, "Invalid key")
 }
 
 func loadConfigBytesFromFile(t *testing.T, filePath string) ([]byte, error) {
@@ -308,7 +288,7 @@ func loadConfigBytesFromFile(t *testing.T, filePath string) ([]byte, error) {
 		t.Fatalf("Failed to read test config for bytes array testing. Error: %s", err)
 	}
 	if n == 0 {
-		t.Fatalf("Failed to read test config for bytes array testing. Mock bytes array is empty")
+		t.Fatal("Failed to read test config for bytes array testing. Mock bytes array is empty")
 	}
 	return cBytes, err
 }
@@ -327,18 +307,18 @@ func TestCAConfigCryptoFiles(t *testing.T) {
 	identityConfig := config.(*IdentityConfig)
 
 	//Testing CA Client File Location
-	certfile, err := identityConfig.CAClientCert(org1)
-	assert.Nil(t, err, "CA Cert file location read failed ")
+	certfile, ok := identityConfig.CAClientCert(org1)
+	assert.True(t, ok, "CA Cert file location read failed ")
 	assert.True(t, len(certfile) > 0)
 
 	//Testing CA Key File Location
-	keyFile, err := identityConfig.CAClientKey(org1)
-	assert.Nil(t, err, "CA Key file location read failed ")
+	keyFile, ok := identityConfig.CAClientKey(org1)
+	assert.True(t, ok, "CA Key file location read failed ")
 	assert.True(t, len(keyFile) > 0)
 
 	//Testing CA Server Cert Files
-	sCertFiles, err := identityConfig.CAServerCerts(org1)
-	assert.Nil(t, err, "Getting CA server cert files failed")
+	sCertFiles, ok := identityConfig.CAServerCerts(org1)
+	assert.True(t, ok, "Getting CA server cert files failed")
 	assert.True(t, len(sCertFiles) > 0)
 
 }
@@ -354,37 +334,22 @@ func TestCAConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal("Failed to get identity config")
 	}
+
 	identityConfig := config.(*IdentityConfig)
 	//Test Crypto config path
 
-	val, ok := backend[0].Lookup("client.cryptoconfig.path")
-	if !ok || val == nil {
-		t.Fatal("expected valid value")
-	}
-
-	assert.True(t, pathvar.Subst(val.(string)) == identityConfig.endpointConfig.CryptoConfigPath(), "Incorrect crypto config path", t)
-
-	//Testing MSPID
-	mspID, err := identityConfig.endpointConfig.MSPID(org1)
-	assert.Nil(t, err, "Get MSP ID failed")
-	assert.True(t, mspID == "Org1MSP", "Get MSP ID failed")
-
-	// testing empty OrgMSP
-	_, err = identityConfig.endpointConfig.MSPID("dummyorg1")
-	assert.NotNil(t, err, "Get MSP ID did not fail for dummyorg1")
-	assert.True(t, err.Error() == "MSP ID is empty for org: dummyorg1", "Get MSP ID did not fail for dummyorg1")
-
 	//Testing CAConfig
-	caConfig, err := identityConfig.CAConfig(org1)
-	assert.Nil(t, err, "Get CA Config failed")
+	caConfig, ok := identityConfig.CAConfig(org1)
+	assert.True(t, ok, "Get CA Config failed")
 	assert.NotNil(t, caConfig, "Get CA Config failed")
+	assert.Equal(t, 1, len(caConfig.GRPCOptions))
+	assert.Equal(t, "ca.org1.example.com", caConfig.GRPCOptions["ssl-target-name-override"])
 
 	// Test CA KeyStore Path
 	testCAKeyStorePath(backend[0], t, identityConfig)
 
 	// test Client
-	c, err := identityConfig.Client()
-	assert.Nil(t, err, "Received error when fetching Client info")
+	c := identityConfig.Client()
 	assert.NotNil(t, c, "Received error when fetching Client info")
 
 }
@@ -396,14 +361,14 @@ func testCAKeyStorePath(backend core.ConfigBackend, t *testing.T, identityConfig
 		t.Fatal("expected valid value")
 	}
 	if val.(string) != identityConfig.CredentialStorePath() {
-		t.Fatalf("Incorrect User Store path")
+		t.Fatal("Incorrect User Store path")
 	}
 	val, ok = backend.Lookup("client.credentialStore.cryptoStore.path")
 	if !ok || val == nil {
 		t.Fatal("expected valid value")
 	}
 	if val.(string) != identityConfig.CAKeyStorePath() {
-		t.Fatalf("Incorrect CA keystore path")
+		t.Fatal("Incorrect CA keystore path")
 	}
 }
 
@@ -422,16 +387,16 @@ func TestCACertAndKeys(t *testing.T) {
 	identityConfig := config.(*IdentityConfig)
 
 	for _, orgID := range orgIDs {
-		val, err := identityConfig.CAClientCert(orgID)
-		assert.Nil(t, err, "identityConfig.CAClientCert not supposed to return error")
+		val, ok := identityConfig.CAClientCert(orgID)
+		assert.True(t, ok, "identityConfig.CAClientCert not supposed to return failure")
 		assert.True(t, len(val) > 0, "identityConfig.CAClientCert supposed to return valid cert")
 
-		val, err = identityConfig.CAClientKey(orgID)
-		assert.Nil(t, err, "identityConfig.CAClientKey not supposed to return error")
+		val, ok = identityConfig.CAClientKey(orgID)
+		assert.True(t, ok, "identityConfig.CAClientKey not supposed to return failure")
 		assert.True(t, len(val) > 0, "identityConfig.CAClientKey supposed to return valid key")
 
-		vals, err := identityConfig.CAServerCerts(orgID)
-		assert.Nil(t, err, "identityConfig.CAClientKey not supposed to return error")
+		vals, ok := identityConfig.CAServerCerts(orgID)
+		assert.True(t, ok, "identityConfig.CAClientKey not supposed to return failure")
 		assert.True(t, len(vals) > 0, "identityConfig.CAClientKey supposed to return server certs")
 		for _, v := range vals {
 			assert.True(t, len(v) > 0, "identityConfig.CAClientKey supposed to return valid server cert")
@@ -480,14 +445,16 @@ func TestIdentityConfigWithMultipleBackends(t *testing.T) {
 	assert.NotNil(t, identityConfig, "Invalid identity config from multiple backends")
 
 	//Client
-	client, err := identityConfig.Client()
-	assert.Nil(t, err, "identityConfig.Client() should have been successful for multiple backends")
+	client := identityConfig.Client()
+	assert.NotNil(t, client, "invalid client config")
 	assert.Equal(t, client.Organization, "org1")
 
 	//CA Config
-	caConfig, err := identityConfig.CAConfig("org1")
-	assert.Nil(t, err, "identityConfig.CAConfig(org1) should have been successful for multiple backends")
+	caConfig, ok := identityConfig.CAConfig("org1")
+	assert.True(t, ok, "identityConfig.CAConfig(org1) should have been successful for multiple backends")
 	assert.Equal(t, caConfig.URL, "https://ca.org1.example.com:7054")
+	assert.Equal(t, 1, len(caConfig.GRPCOptions))
+	assert.Equal(t, "ca.org1.example.com", caConfig.GRPCOptions["ssl-target-name-override"])
 
 }
 
@@ -501,4 +468,37 @@ func newViper(path string) *viper.Viper {
 		panic(err)
 	}
 	return myViper
+}
+
+func tlsCertByBytes(bytes []byte) (*x509.Certificate, error) {
+
+	block, _ := pem.Decode(bytes)
+
+	if block != nil {
+		pub, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+
+		return pub, nil
+	}
+
+	//no cert found and there is no error
+	return nil, errors.New("empty byte")
+}
+
+func TestEntityMatchers(t *testing.T) {
+
+	backend, err := config.FromFile(configTestEntityMatchersFilePath)()
+	if err != nil {
+		t.Fatal("Failed to get config backend")
+	}
+
+	identityConfig, err := ConfigFromBackend(backend...)
+	assert.Nil(t, err, "Failed to get endpoint config from backend")
+	assert.NotNil(t, identityConfig, "expected valid endpointconfig")
+
+	configImpl := identityConfig.(*IdentityConfig)
+	assert.Equal(t, 3, len(configImpl.caMatchers), "preloading matchers isn't working as expected")
+
 }

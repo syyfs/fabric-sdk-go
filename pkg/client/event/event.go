@@ -15,9 +15,12 @@ SPDX-License-Identifier: Apache-2.0
 package event
 
 import (
+	"github.com/hyperledger/fabric-sdk-go/pkg/common/options"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/context"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
 	"github.com/hyperledger/fabric-sdk-go/pkg/fab/events/client"
+	"github.com/hyperledger/fabric-sdk-go/pkg/fab/events/deliverclient"
+	"github.com/hyperledger/fabric-sdk-go/pkg/fab/events/deliverclient/seek"
 	"github.com/pkg/errors"
 )
 
@@ -25,6 +28,8 @@ import (
 type Client struct {
 	eventService      fab.EventService
 	permitBlockEvents bool
+	fromBlock         uint64
+	seekType          seek.Type
 }
 
 // New returns a Client instance. Client receives events such as block, filtered block,
@@ -51,7 +56,15 @@ func New(channelProvider context.ChannelProvider, opts ...ClientOption) (*Client
 
 	var es fab.EventService
 	if eventClient.permitBlockEvents {
-		es, err = channelContext.ChannelService().EventService(client.WithBlockEvents())
+		var opts []options.Opt
+		opts = append(opts, client.WithBlockEvents())
+		if eventClient.seekType != "" {
+			opts = append(opts, deliverclient.WithSeekType(eventClient.seekType))
+			if eventClient.seekType == seek.FromBlock {
+				opts = append(opts, deliverclient.WithBlockNum(eventClient.fromBlock))
+			}
+		}
+		es, err = channelContext.ChannelService().EventService(opts...)
 	} else {
 		es, err = channelContext.ChannelService().EventService()
 	}

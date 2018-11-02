@@ -7,23 +7,33 @@
 # This script runs Go linting and vetting tools
 
 set -e
+LINT_CHANGED_ONLY="${LINT_CHANGED_ONLY:-false}"
+GO_CMD="${GO_CMD:-go}"
+SCRIPT_DIR="$(dirname "$0")"
 
+REPO="github.com/hyperledger/fabric-sdk-go"
 
+echo "Running" $(basename "$0")
 
-GOMETALINT_CMD=gometalinter
+source ${SCRIPT_DIR}/lib/find_packages.sh
+source ${SCRIPT_DIR}/lib/linter.sh
 
-
-PROJECT_PATH=$GOPATH/src/github.com/hyperledger/fabric-sdk-go
-
-declare -a arr=(
-"./pkg"
-"./test"
+# Find all packages that should be linted.
+declare -a PKG_SRC=(
+    "./pkg"
+    "./test"
 )
+declare PKG_EXCLUDE=""
+findPackages
 
+# Reduce Linter checks to changed packages.
+if [ "$LINT_CHANGED_ONLY" = true ]; then
+    findChangedLinterPkgs
+fi
 
-echo "Running metalinters..."
-for i in "${arr[@]}"
-do
-   echo "Checking $i"
-   $GOMETALINT_CMD --config=./gometalinter.json $i/...
-done
+if [ ${#PKGS[@]} -eq 0 ]; then
+    echo "Skipping tests since no packages were changed"
+    exit 0
+fi
+
+runLinter

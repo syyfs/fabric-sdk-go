@@ -16,29 +16,29 @@ import (
 )
 
 const configTestFilePath = "../../core/config/testdata/config_test.yaml"
-const entityMatcherTestFilePath = "../../core/config/testdata/config_test_entity_matchers.yaml"
+const entityMatcherTestFilePath = "../../core/config/testdata/config_test.yaml"
 const localOverrideEntityMatcher = "../../../test/fixtures/config/overrides/local_entity_matchers.yaml"
 
 func TestNetworkPeerConfigFromURL(t *testing.T) {
 	configBackend, err := config.FromFile(configTestFilePath)()
 	if err != nil {
-		t.Fatalf("Unexpected error reading config backend: %v", err)
+		t.Fatalf("Unexpected error reading config backend: %s", err)
 	}
 
 	sampleConfig, err := fabImpl.ConfigFromBackend(configBackend...)
 	if err != nil {
-		t.Fatalf("Unexpected error reading config: %v", err)
+		t.Fatalf("Unexpected error reading config: %s", err)
 	}
 
-	_, err = NetworkPeerConfigFromURL(sampleConfig, "invalid")
+	_, err = NetworkPeerConfig(sampleConfig, "invalid")
 	assert.NotNil(t, err, "invalid url should return err")
 
-	np, err := NetworkPeerConfigFromURL(sampleConfig, "peer0.org2.example.com:8051")
+	np, err := NetworkPeerConfig(sampleConfig, "peer0.org2.example.com:8051")
 	assert.Nil(t, err, "valid url should not return err")
 	assert.Equal(t, "peer0.org2.example.com:8051", np.URL, "wrong URL")
 	assert.Equal(t, "Org2MSP", np.MSPID, "wrong MSP")
 
-	np, err = NetworkPeerConfigFromURL(sampleConfig, "peer0.org1.example.com:7051")
+	np, err = NetworkPeerConfig(sampleConfig, "peer0.org1.example.com:7051")
 	assert.Nil(t, err, "valid url should not return err")
 	assert.Equal(t, "peer0.org1.example.com:7051", np.URL, "wrong URL")
 	assert.Equal(t, "Org1MSP", np.MSPID, "wrong MSP")
@@ -47,12 +47,12 @@ func TestNetworkPeerConfigFromURL(t *testing.T) {
 func TestSearchPeerConfigFromURL(t *testing.T) {
 	configBackend1, err := config.FromFile(localOverrideEntityMatcher)()
 	if err != nil {
-		t.Fatalf("Unexpected error reading config backend: %v", err)
+		t.Fatalf("Unexpected error reading config backend: %s", err)
 	}
 
 	configBackend2, err := config.FromFile(entityMatcherTestFilePath)()
 	if err != nil {
-		t.Fatalf("Unexpected error reading config backend: %v", err)
+		t.Fatalf("Unexpected error reading config backend: %s", err)
 	}
 
 	//override entitymatcher
@@ -61,11 +61,11 @@ func TestSearchPeerConfigFromURL(t *testing.T) {
 
 	sampleConfig, err := fabImpl.ConfigFromBackend(backends...)
 	if err != nil {
-		t.Fatalf("Unexpected error reading config: %v", err)
+		t.Fatalf("Unexpected error reading config: %s", err)
 	}
 
-	peer0Org1, err := sampleConfig.PeerConfig("peer0.org1.example.com")
-	assert.Nil(t, err, "supposed to get no error")
+	_, ok := sampleConfig.PeerConfig("peer0.org1.example.com")
+	assert.True(t, ok, "peerconfig search was expected to be successful")
 
 	//Positive scenario,
 	// peerconfig should be found using matched URL
@@ -75,7 +75,6 @@ func TestSearchPeerConfigFromURL(t *testing.T) {
 	assert.NotNil(t, peerConfig, "supposed to get valid peerConfig by url :%s", testURL)
 	assert.Equal(t, testURL, peerConfig.URL)
 	assert.Nil(t, err, "supposed to get no error")
-	assert.Equal(t, peer0Org1.EventURL, peerConfig.EventURL)
 
 	// peerconfig should be found using actual URL
 	testURL2 := "peer0.org1.example.com:7051"
@@ -85,6 +84,25 @@ func TestSearchPeerConfigFromURL(t *testing.T) {
 	assert.NotNil(t, peerConfig, "supposed to get valid peerConfig by url :%s", testURL2)
 	assert.Equal(t, testURL, peerConfig.URL)
 	assert.Nil(t, err, "supposed to get no error")
-	assert.Equal(t, peer0Org1.EventURL, peerConfig.EventURL)
+}
 
+func TestMSPID(t *testing.T) {
+	configBackend, err := config.FromFile(configTestFilePath)()
+	if err != nil {
+		t.Fatalf("Unexpected error reading config backend: %s", err)
+	}
+
+	sampleConfig, err := fabImpl.ConfigFromBackend(configBackend...)
+	if err != nil {
+		t.Fatalf("Unexpected error reading config: %s", err)
+	}
+
+	mspID, ok := MSPID(sampleConfig, "invalid")
+	assert.False(t, ok, "supposed to fail for invalid org name")
+	assert.Empty(t, mspID, "supposed to get valid MSP ID")
+
+	mspID, ok = MSPID(sampleConfig, "org1")
+	assert.True(t, ok, "supposed to pass with valid org name")
+	assert.NotEmpty(t, mspID, "supposed to get valid MSP ID")
+	assert.Equal(t, "Org1MSP", mspID, "supposed to get valid MSP ID")
 }

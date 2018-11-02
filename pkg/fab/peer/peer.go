@@ -16,7 +16,6 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	"github.com/hyperledger/fabric-sdk-go/pkg/client/common/verifier"
-	"github.com/hyperledger/fabric-sdk-go/pkg/common/errors/status"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/logging"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
 )
@@ -134,15 +133,7 @@ func FromPeerConfig(peerCfg *fab.NetworkPeer) Option {
 		p.inSecure = isInsecureConnectionAllowed(peerCfg)
 
 		var err error
-		p.certificate, err = peerCfg.TLSCACerts.TLSCert()
-
-		if err != nil {
-			//Ignore empty cert errors,
-			errStatus, ok := err.(*status.Status)
-			if !ok || errStatus.Code != status.EmptyCert.ToInt32() {
-				return err
-			}
-		}
+		p.certificate = peerCfg.TLSCACert
 		if peerCfg.GRPCOptions["allow-insecure"] == false {
 			//verify if certificate was expired or not yet valid
 			err = verifier.ValidateCertificateDates(p.certificate)

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	dyndiscmocks "github.com/hyperledger/fabric-sdk-go/pkg/client/common/discovery/dynamicdiscovery/mocks"
+	clientmocks "github.com/hyperledger/fabric-sdk-go/pkg/client/common/mocks"
 	contextAPI "github.com/hyperledger/fabric-sdk-go/pkg/common/providers/context"
 	pfab "github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
 	discmocks "github.com/hyperledger/fabric-sdk-go/pkg/fab/discovery/mocks"
@@ -38,9 +38,9 @@ func TestLocalDiscoveryService(t *testing.T) {
 	}
 	config.SetCustomNetworkPeerCfg([]pfab.NetworkPeer{peer1})
 
-	discClient := dyndiscmocks.NewMockDiscoveryClient()
+	discClient := clientmocks.NewMockDiscoveryClient()
 	discClient.SetResponses(
-		&dyndiscmocks.MockDiscoverEndpointResponse{
+		&clientmocks.MockDiscoverEndpointResponse{
 			PeerEndpoints: []*discmocks.MockDiscoveryPeerEndpoint{},
 		},
 	)
@@ -49,15 +49,19 @@ func TestLocalDiscoveryService(t *testing.T) {
 		return discClient, nil
 	}
 
-	service := newLocalService(
-		options{
-			refreshInterval: 500 * time.Millisecond,
-			responseTimeout: 2 * time.Second,
-		},
+	// Test initialize with invalid MSP ID
+	service := newLocalService(config, mspID2)
+	err := service.Initialize(localCtx)
+	assert.Error(t, err)
+
+	service = newLocalService(
+		config, mspID1,
+		WithRefreshInterval(500*time.Millisecond),
+		WithResponseTimeout(2*time.Second),
 	)
 	defer service.Close()
 
-	err := service.Initialize(localCtx)
+	err = service.Initialize(localCtx)
 	assert.NoError(t, err)
 	// Initialize again should produce no error
 	err = service.Initialize(localCtx)
@@ -68,7 +72,7 @@ func TestLocalDiscoveryService(t *testing.T) {
 	assert.Equal(t, 0, len(peers))
 
 	discClient.SetResponses(
-		&dyndiscmocks.MockDiscoverEndpointResponse{
+		&clientmocks.MockDiscoverEndpointResponse{
 			PeerEndpoints: []*discmocks.MockDiscoveryPeerEndpoint{
 				{
 					MSPID:        mspID1,
@@ -83,10 +87,10 @@ func TestLocalDiscoveryService(t *testing.T) {
 
 	peers, err = service.GetPeers()
 	assert.NoError(t, err)
-	assert.Equal(t, 1, len(peers))
+	assert.Equal(t, 1, len(peers), "Expecting 1 peer")
 
 	discClient.SetResponses(
-		&dyndiscmocks.MockDiscoverEndpointResponse{
+		&clientmocks.MockDiscoverEndpointResponse{
 			PeerEndpoints: []*discmocks.MockDiscoveryPeerEndpoint{
 				{
 					MSPID:        mspID1,
@@ -111,7 +115,7 @@ func TestLocalDiscoveryService(t *testing.T) {
 
 	peers, err = service.GetPeers()
 	assert.NoError(t, err)
-	assert.Equal(t, 2, len(peers))
+	assert.Equal(t, 2, len(peers), "Expecting 2 peers")
 
 	for _, p := range peers {
 		assert.Equalf(t, mspID1, p.MSPID(), "Expecting peer to be in MSP [%s]", mspID1)

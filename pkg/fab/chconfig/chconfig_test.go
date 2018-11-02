@@ -23,17 +23,21 @@ import (
 	"strings"
 
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/errors/retry"
+	"github.com/hyperledger/fabric-sdk-go/pkg/core/config"
+	fabImpl "github.com/hyperledger/fabric-sdk-go/pkg/fab"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
-	channelID = "testChannel"
+	channelID          = "testChannel"
+	configTestFilePath = "../../core/config/testdata/config_test.yaml"
 )
 
 func TestChannelConfigWithPeer(t *testing.T) {
 
 	ctx := setupTestContext()
-	peer := getPeerWithConfigBlockPayload(t)
+	peer := getPeerWithConfigBlockPayload(t, "http://peer1.com")
 
 	channelConfig, err := New(channelID, WithPeers([]fab.Peer{peer}), WithMinResponses(1), WithMaxTargets(1))
 	if err != nil {
@@ -64,7 +68,7 @@ func TestChannelConfigWithPeerWithRetries(t *testing.T) {
 	defRetryOpts.InitialBackoff = 5 * time.Millisecond
 	defRetryOpts.BackoffFactor = 1.0
 
-	chConfig := &fab.ChannelNetworkConfig{
+	chConfig := &fab.ChannelEndpointConfig{
 		Policies: fab.ChannelPolicies{QueryChannelConfig: fab.QueryChannelConfigPolicy{
 			MinResponses: 2,
 			MaxTargets:   1, //Ignored since we pass targets
@@ -75,8 +79,8 @@ func TestChannelConfigWithPeerWithRetries(t *testing.T) {
 	mockConfig := &customMockConfig{MockConfig: &mocks.MockConfig{}, chConfig: chConfig}
 	ctx.SetEndpointConfig(mockConfig)
 
-	peer1 := getPeerWithConfigBlockPayload(t)
-	peer2 := getPeerWithConfigBlockPayload(t)
+	peer1 := getPeerWithConfigBlockPayload(t, "http://peer1.com")
+	peer2 := getPeerWithConfigBlockPayload(t, "http://peer2.com")
 
 	channelConfig, err := New(channelID, WithPeers([]fab.Peer{peer1, peer2}))
 	if err != nil {
@@ -92,7 +96,7 @@ func TestChannelConfigWithPeerWithRetries(t *testing.T) {
 
 	_, err = channelConfig.Query(reqCtx)
 	if err == nil || !strings.Contains(err.Error(), "ENDORSEMENT_MISMATCH") {
-		t.Fatalf("Supposed to fail with ENDORSEMENT_MISMATCH. Description: payloads for config block do not match")
+		t.Fatal("Supposed to fail with ENDORSEMENT_MISMATCH. Description: payloads for config block do not match")
 	}
 
 	assert.True(t, overrideRetryHandler.(*customRetryHandler).retries-1 == numberOfAttempts, "number of attempts missmatching")
@@ -101,7 +105,7 @@ func TestChannelConfigWithPeerWithRetries(t *testing.T) {
 func TestChannelConfigWithPeerError(t *testing.T) {
 
 	ctx := setupTestContext()
-	peer := getPeerWithConfigBlockPayload(t)
+	peer := getPeerWithConfigBlockPayload(t, "http://peer1.com")
 
 	channelConfig, err := New(channelID, WithPeers([]fab.Peer{peer}), WithMinResponses(2))
 	if err != nil {
@@ -113,7 +117,7 @@ func TestChannelConfigWithPeerError(t *testing.T) {
 
 	_, err = channelConfig.Query(reqCtx)
 	if err == nil {
-		t.Fatalf("Should have failed with since there's one endorser and at least two are required")
+		t.Fatal("Should have failed with since there's one endorser and at least two are required")
 	}
 }
 
@@ -133,7 +137,7 @@ func TestChannelConfigWithOrdererError(t *testing.T) {
 	// Expecting error since orderer is not setup
 	_, err = channelConfig.Query(reqCtx)
 	if err == nil {
-		t.Fatalf("Should have failed since orderer is not available")
+		t.Fatal("Should have failed since orderer is not available")
 	}
 
 }
@@ -178,7 +182,7 @@ func TestResolveOptsFromConfig(t *testing.T) {
 
 	defRetryOpts := retry.DefaultOpts
 
-	chConfig := &fab.ChannelNetworkConfig{
+	chConfig := &fab.ChannelEndpointConfig{
 		Policies: fab.ChannelPolicies{QueryChannelConfig: fab.QueryChannelConfigPolicy{
 			MinResponses: 8,
 			MaxTargets:   9,
@@ -222,20 +226,73 @@ func TestResolveOptsFromConfig(t *testing.T) {
 }
 
 func TestResolveOptsDefaultValues(t *testing.T) {
+	testResolveOptsDefaultValues(t, channelID)
+}
+
+func TestResolveOptsDefaultValuesWithInvalidChannel(t *testing.T) {
+	//Should be successful even with invalid channel id
+	testResolveOptsDefaultValues(t, "INVALID-CHANNEL-ID")
+}
+
+func TestCapabilities(t *testing.T) {
+	capability1 := "V1_1_PVTDATA_EXPERIMENTAL"
+	capability2 := "V1_1_RESOURCETREE_EXPERIMENTAL"
+	v1_12Capability := "V1_12"
+	v2_0Capability := "V2_0"
+	v2_1Capability := "V2_1"
+
+	builder := &mocks.MockConfigBlockBuilder{
+		MockConfigGroupBuilder: mocks.MockConfigGroupBuilder{
+			ModPolicy: "Admins",
+			MSPNames: []string{
+				"Org1MSP",
+				"Org2MSP",
+			},
+			OrdererAddress:          "localhost:9999",
+			RootCA:                  validRootCA,
+			ChannelCapabilities:     []string{fab.V1_1Capability},
+			OrdererCapabilities:     []string{fab.V1_1Capability, v2_0Capability},
+			ApplicationCapabilities: []string{fab.V1_2Capability, capability1},
+		},
+		Index:           0,
+		LastConfigIndex: 0,
+	}
+
+	chConfig, err := extractConfig("mychannel", builder.Build())
+	require.NoError(t, err)
+
+	assert.Truef(t, chConfig.HasCapability(fab.ChannelGroupKey, fab.V1_1Capability), "expecting channel capability [%s]", fab.V1_1Capability)
+	assert.Truef(t, chConfig.HasCapability(fab.OrdererGroupKey, fab.V1_1Capability), "expecting orderer capability [%s]", fab.V1_1Capability)
+	assert.Truef(t, chConfig.HasCapability(fab.OrdererGroupKey, v1_12Capability), "expecting orderer capability [%s] since [%s] is supported", v1_12Capability, v2_0Capability)
+	assert.Truef(t, chConfig.HasCapability(fab.OrdererGroupKey, v2_0Capability), "expecting orderer capability [%s]", v2_0Capability)
+	assert.Falsef(t, chConfig.HasCapability(fab.OrdererGroupKey, v2_1Capability), "not expecting orderer capability", v2_1Capability)
+	assert.Truef(t, chConfig.HasCapability(fab.ApplicationGroupKey, fab.V1_2Capability), "expecting application capability [%s]", fab.V1_2Capability)
+	assert.Truef(t, chConfig.HasCapability(fab.ApplicationGroupKey, fab.V1_1Capability), "expecting application capability [%s] since [%s] is supported", fab.V1_1Capability, fab.V1_2Capability)
+	assert.Truef(t, chConfig.HasCapability(fab.ApplicationGroupKey, capability1), "expecting application capability [%s]", capability1)
+	assert.Falsef(t, chConfig.HasCapability(fab.ApplicationGroupKey, capability2), "not expecting application capability [%s]", capability2)
+}
+
+func testResolveOptsDefaultValues(t *testing.T, channelID string) {
 	user := mspmocks.NewMockSigningIdentity("test", "test")
 	ctx := mocks.NewMockContext(user)
 
-	mockConfig := &customMockConfig{MockConfig: &mocks.MockConfig{}, chConfig: nil}
-	ctx.SetEndpointConfig(mockConfig)
+	backends, err := config.FromFile(configTestFilePath)()
+	if err != nil {
+		t.Fatal("supposed to get valid backends")
+	}
+	endpointCfg, err := fabImpl.ConfigFromBackend(backends...)
+	if err != nil {
+		t.Fatal("supposed to get valid endpoint config")
+	}
+	ctx.SetEndpointConfig(endpointCfg)
 
 	channelConfig, err := New(channelID, WithPeers([]fab.Peer{}))
 	if err != nil {
 		t.Fatal("Failed to create channel config")
 	}
+
 	err = channelConfig.resolveOptsFromConfig(ctx)
-	if err != nil {
-		t.Fatal("Failed to resolve opts from config")
-	}
+	assert.Nil(t, err, "Failed to resolve opts from config, %v", err)
 	assert.True(t, channelConfig.opts.MaxTargets == 2, "supposed to be loaded once opts resolved from config")
 	assert.True(t, channelConfig.opts.MinResponses == 1, "supposed to be loaded once opts resolved from config")
 	assert.True(t, channelConfig.opts.RetryOpts.RetryableCodes != nil, "supposed to be loaded once opts resolved from config")
@@ -248,7 +305,7 @@ func setupTestContext() context.Client {
 	return ctx
 }
 
-func getPeerWithConfigBlockPayload(t *testing.T) fab.Peer {
+func getPeerWithConfigBlockPayload(t *testing.T, peerURL string) fab.Peer {
 
 	// create config block builder in order to create valid payload
 	builder := &mocks.MockConfigBlockBuilder{
@@ -267,11 +324,11 @@ func getPeerWithConfigBlockPayload(t *testing.T) fab.Peer {
 
 	payload, err := proto.Marshal(builder.Build())
 	if err != nil {
-		t.Fatalf("Failed to marshal mock block")
+		t.Fatal("Failed to marshal mock block")
 	}
 
 	// peer with valid config block payload
-	peer := &mocks.MockPeer{MockName: "Peer1", MockURL: "http://peer1.com", MockRoles: []string{}, MockCert: nil, Payload: payload, Status: 200}
+	peer := &mocks.MockPeer{MockName: "Peer1", MockURL: peerURL, MockRoles: []string{}, MockCert: nil, Payload: payload, Status: 200}
 
 	return peer
 }
@@ -288,13 +345,13 @@ func (pp *mockProposalProcessor) ProcessTransactionProposal(reqCtx reqContext.Co
 //customMockConfig to mock config to override channel configuration options
 type customMockConfig struct {
 	*mocks.MockConfig
-	chConfig *fab.ChannelNetworkConfig
+	chConfig *fab.ChannelEndpointConfig
 	called   bool
 }
 
-func (c *customMockConfig) ChannelConfig(name string) (*fab.ChannelNetworkConfig, error) {
+func (c *customMockConfig) ChannelConfig(name string) *fab.ChannelEndpointConfig {
 	c.called = true
-	return c.chConfig, nil
+	return c.chConfig
 }
 
 //customRetryHandler is wrapper around retry handler which keeps count of attempts for unit-testing

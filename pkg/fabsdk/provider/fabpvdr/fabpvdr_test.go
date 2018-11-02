@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/context"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/msp"
 	"github.com/hyperledger/fabric-sdk-go/pkg/core/config"
@@ -23,13 +22,7 @@ import (
 	peerImpl "github.com/hyperledger/fabric-sdk-go/pkg/fab/peer"
 	mspImpl "github.com/hyperledger/fabric-sdk-go/pkg/msp"
 	mspmocks "github.com/hyperledger/fabric-sdk-go/pkg/msp/test/mockmsp"
-	"github.com/stretchr/testify/assert"
 )
-
-type mockClientContext struct {
-	context.Providers
-	msp.SigningIdentity
-}
 
 func TestCreateInfraProvider(t *testing.T) {
 	newInfraProvider(t)
@@ -38,7 +31,7 @@ func TestCreateInfraProvider(t *testing.T) {
 func verifyPeer(t *testing.T, peer fab.Peer, url string) {
 	_, ok := peer.(*peerImpl.Peer)
 	if !ok {
-		t.Fatalf("Unexpected peer impl created")
+		t.Fatal("Unexpected peer impl created")
 	}
 
 	// Brittle tests follow
@@ -63,30 +56,16 @@ func TestCreatePeerFromConfig(t *testing.T) {
 	peer, err := p.CreatePeerFromConfig(&peerCfg)
 
 	if err != nil {
-		t.Fatalf("Unexpected error creating peer %v", err)
+		t.Fatalf("Unexpected error creating peer %s", err)
 	}
 
 	verifyPeer(t, peer, url)
 }
 
-func TestCreateMembership(t *testing.T) {
-	p := newInfraProvider(t)
-	ctx := mocks.NewMockProviderContext()
-	user := mspmocks.NewMockSigningIdentity("user", "user")
-	clientCtx := &mockClientContext{
-		Providers:       ctx,
-		SigningIdentity: user,
-	}
-
-	m, err := p.CreateChannelMembership(clientCtx, "test")
-	assert.Nil(t, err)
-	assert.NotNil(t, m)
-}
-
 func newInfraProvider(t *testing.T) *InfraProvider {
 	configBackend, err := config.FromFile("../../../../test/fixtures/config/config_test.yaml")()
 	if err != nil {
-		t.Fatalf("config.FromFile failed: %v", err)
+		t.Fatalf("config.FromFile failed: %s", err)
 	}
 
 	cryptoCfg := cryptosuite.ConfigFromBackend(configBackend...)
@@ -106,7 +85,7 @@ func newInfraProvider(t *testing.T) *InfraProvider {
 
 	cryptoSuite, err := sw.GetSuiteByConfig(cryptoCfg)
 	if err != nil {
-		panic(fmt.Sprintf("cryptosuiteimpl.GetSuiteByConfig: %v", err))
+		panic(fmt.Sprintf("cryptosuiteimpl.GetSuiteByConfig: %s", err))
 	}
 	im := make(map[string]msp.IdentityManager)
 	im[""] = &mocks.MockIdentityManager{}

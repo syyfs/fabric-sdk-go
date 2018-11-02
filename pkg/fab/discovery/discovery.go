@@ -21,6 +21,10 @@ import (
 	"google.golang.org/grpc"
 )
 
+const (
+	signerCacheSize = 10 // TODO: set an appropriate value (and perhaps make configurable)
+)
+
 // Client implements a Discovery client
 type Client struct {
 	ctx      fabcontext.Client
@@ -83,10 +87,7 @@ func (c *Client) Send(ctx context.Context, req *discclient.Request, targets ...f
 }
 
 func (c *Client) send(reqCtx context.Context, req *discclient.Request, target fab.PeerConfig) (discclient.Response, error) {
-	opts, err := comm.OptsFromPeerConfig(&target)
-	if err != nil {
-		return nil, err
-	}
+	opts := comm.OptsFromPeerConfig(&target)
 	opts = append(opts, comm.WithConnectTimeout(c.ctx.EndpointConfig().Timeout(fab.DiscoveryConnection)))
 
 	conn, err := comm.NewConnection(c.ctx, target.URL, opts...)
@@ -102,6 +103,7 @@ func (c *Client) send(reqCtx context.Context, req *discclient.Request, target fa
 		func(msg []byte) ([]byte, error) {
 			return c.ctx.SigningManager().Sign(msg, c.ctx.PrivateKey())
 		},
+		signerCacheSize,
 	)
 	return discClient.Send(reqCtx, req, c.authInfo)
 }
@@ -122,8 +124,13 @@ func newAuthInfo(ctx fabcontext.Client) (*discovery.AuthInfo, error) {
 		return nil, err
 	}
 
+	hash, err := corecomm.TLSCertHash(ctx.EndpointConfig())
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get tls cert hash")
+	}
+
 	return &discovery.AuthInfo{
 		ClientIdentity:    identity,
-		ClientTlsCertHash: corecomm.TLSCertHash(ctx.EndpointConfig()),
+		ClientTlsCertHash: hash,
 	}, nil
 }

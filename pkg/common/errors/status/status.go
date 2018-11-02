@@ -58,7 +58,7 @@ const (
 
 	// EndorserServerStatus status returned by the endorser server
 	EndorserServerStatus
-	// EventServerStatus status returned by the eventhub
+	// EventServerStatus status returned by the event service
 	EventServerStatus
 	// OrdererServerStatus status returned by the ordering service
 	OrdererServerStatus
@@ -78,6 +78,12 @@ const (
 
 	// ChaincodeStatus defines the status codes returned by chaincode
 	ChaincodeStatus
+
+	// DiscoveryServerStatus status returned by the Discovery Server
+	DiscoveryServerStatus
+
+	// TestStatus is used by tests to create retry codes.
+	TestStatus
 )
 
 // GroupName maps the groups in this packages to human-readable strings
@@ -93,6 +99,8 @@ var GroupName = map[int32]string{
 	8:  "Orderer Client Status",
 	9:  "Client Status",
 	10: "Chaincode status",
+	11: "Discovery status",
+	12: "Test status",
 }
 
 func (g Group) String() string {
@@ -116,7 +124,12 @@ func FromError(err error) (s *Status, ok bool) {
 		return s, true
 	}
 	if m, ok := unwrappedErr.(multi.Errors); ok {
-		return New(ClientStatus, MultipleErrors.ToInt32(), m.Error(), nil), true
+		// Return all of the errors in the details
+		var errors []interface{}
+		for _, err := range m {
+			errors = append(errors, err)
+		}
+		return New(ClientStatus, MultipleErrors.ToInt32(), m.Error(), errors), true
 	}
 
 	return nil, false

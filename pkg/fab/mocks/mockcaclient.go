@@ -41,3 +41,58 @@ func (mgr *MockCAClient) Register(request *api.RegistrationRequest) (string, err
 func (mgr *MockCAClient) Revoke(request *api.RevocationRequest) (*api.RevocationResponse, error) {
 	return nil, errors.New("not implemented")
 }
+
+// CreateIdentity creates an identity
+func (mgr *MockCAClient) CreateIdentity(request *api.IdentityRequest) (*api.IdentityResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+//GetIdentity returns an identity by id
+func (mgr *MockCAClient) GetIdentity(id, caname string) (*api.IdentityResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+// GetAllIdentities returns all identities that the caller is authorized to see
+func (mgr *MockCAClient) GetAllIdentities(caname string) ([]*api.IdentityResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+// ModifyIdentity updates identity
+func (mgr *MockCAClient) ModifyIdentity(request *api.IdentityRequest) (*api.IdentityResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+// RemoveIdentity removes identity
+func (mgr *MockCAClient) RemoveIdentity(request *api.RemoveIdentityRequest) (*api.IdentityResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+// AddAffiliation add affiliation
+func (mgr *MockCAClient) AddAffiliation(request *api.AffiliationRequest) (*api.AffiliationResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+// GetAllAffiliations get all affiliations
+func (mgr *MockCAClient) GetAllAffiliations(caname string) (*api.AffiliationResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+// GetAffiliation get an affiliation
+func (mgr *MockCAClient) GetAffiliation(affiliation, caname string) (*api.AffiliationResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+// ModifyAffiliation update an affiliation
+func (mgr *MockCAClient) ModifyAffiliation(request *api.ModifyAffiliationRequest) (*api.AffiliationResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+// RemoveAffiliation remove an affiliation
+func (mgr *MockCAClient) RemoveAffiliation(request *api.AffiliationRequest) (*api.AffiliationResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+// GetCAInfo returns generic CA information
+func (mgr *MockCAClient) GetCAInfo() (*api.GetCAInfoResponse, error) {
+	return nil, errors.New("not implemented")
+}

@@ -30,20 +30,18 @@ type ClientContext interface {
 
 // InfraProvider enables access to fabric objects such as peer and user based on config or
 type InfraProvider interface {
-	CreateChannelConfig(name string) (ChannelConfig, error)
-	CreateChannelCfg(ctx ClientContext, channelID string) (ChannelCfg, error)
-	CreateChannelTransactor(reqCtx reqContext.Context, cfg ChannelCfg) (Transactor, error)
-	CreateChannelMembership(ctx ClientContext, channelID string) (ChannelMembership, error)
-	CreateEventService(ctx ClientContext, channelID string, opts ...options.Opt) (EventService, error)
 	CreatePeerFromConfig(peerCfg *NetworkPeer) (Peer, error)
 	CreateOrdererFromConfig(cfg *OrdererConfig) (Orderer, error)
 	CommManager() CommManager
 	Close()
 }
 
-// SelectionProvider is used to select peers for endorsement
-type SelectionProvider interface {
-	CreateSelectionService(channelID string) (SelectionService, error)
+// ChaincodeCall contains the ID of the chaincode as well
+// as an optional set of private data collections that may be
+// accessed by the chaincode.
+type ChaincodeCall struct {
+	ID          string
+	Collections []string
 }
 
 // SelectionService selects peers for endorsement and commit events
@@ -52,12 +50,7 @@ type SelectionService interface {
 	// policies of all of the given chaincodes.
 	// A set of options may be provided to the selection service. Note that the type of options
 	// may vary depending on the specific selection service implementation.
-	GetEndorsersForChaincode(chaincodeIDs []string, opts ...options.Opt) ([]Peer, error)
-}
-
-// DiscoveryProvider is used to discover peers on the network
-type DiscoveryProvider interface {
-	CreateDiscoveryService(channelID string) (DiscoveryService, error)
+	GetEndorsersForChaincode(chaincodes []*ChaincodeCall, opts ...options.Opt) ([]Peer, error)
 }
 
 // DiscoveryService is used to discover eligible peers on specific channel
@@ -67,13 +60,28 @@ type DiscoveryService interface {
 
 // LocalDiscoveryProvider is used to discover peers in the local MSP
 type LocalDiscoveryProvider interface {
-	CreateLocalDiscoveryService() (DiscoveryService, error)
+	CreateLocalDiscoveryService(mspID string) (DiscoveryService, error)
 }
 
 // TargetFilter allows for filtering target peers
 type TargetFilter interface {
 	// Accept returns true if peer should be included in the list of target peers
 	Accept(peer Peer) bool
+}
+
+// TargetSorter allows for sorting target peers
+type TargetSorter interface {
+	// Returns the sorted peers
+	Sort(peers []Peer) []Peer
+}
+
+// PrioritySelector determines how likely a peer is to be
+// selected over another peer
+type PrioritySelector interface {
+	// A positive return value means peer1 is selected
+	// A negative return value means the peer2 is selected
+	// Zero return value means their priorities are the same
+	Compare(peer1, peer2 Peer) int
 }
 
 // CommManager enables network communication.
@@ -85,20 +93,17 @@ type CommManager interface {
 //EndpointConfig contains endpoint network configurations
 type EndpointConfig interface {
 	Timeout(TimeoutType) time.Duration
-	MSPID(org string) (string, error)
-	PeerMSPID(name string) (string, error)
-	OrderersConfig() ([]OrdererConfig, error)
-	OrdererConfig(nameOrURL string) (*OrdererConfig, error)
-	PeersConfig(org string) ([]PeerConfig, error)
-	PeerConfig(nameOrURL string) (*PeerConfig, error)
-	NetworkConfig() (*NetworkConfig, error)
-	NetworkPeers() ([]NetworkPeer, error)
-	ChannelConfig(name string) (*ChannelNetworkConfig, error)
-	ChannelPeers(name string) ([]ChannelPeer, error)
-	ChannelOrderers(name string) ([]OrdererConfig, error)
-	TLSCACertPool(certConfig ...*x509.Certificate) (*x509.CertPool, error)
-	EventServiceType() EventServiceType
-	TLSClientCerts() ([]tls.Certificate, error)
+	OrderersConfig() []OrdererConfig
+	OrdererConfig(nameOrURL string) (*OrdererConfig, bool)
+	PeersConfig(org string) ([]PeerConfig, bool)
+	PeerConfig(nameOrURL string) (*PeerConfig, bool)
+	NetworkConfig() *NetworkConfig
+	NetworkPeers() []NetworkPeer
+	ChannelConfig(name string) *ChannelEndpointConfig
+	ChannelPeers(name string) []ChannelPeer
+	ChannelOrderers(name string) []OrdererConfig
+	TLSCACertPool() CertPool
+	TLSClientCerts() []tls.Certificate
 	CryptoConfigPath() string
 }
 
@@ -106,10 +111,8 @@ type EndpointConfig interface {
 type TimeoutType int
 
 const (
-	// EndorserConnection connection timeout
-	EndorserConnection TimeoutType = iota
-	// EventHubConnection connection timeout
-	EventHubConnection
+	// PeerConnection connection timeout
+	PeerConnection TimeoutType = iota
 	// EventReg connection timeout
 	EventReg
 	// Query timeout
@@ -142,24 +145,24 @@ const (
 	DiscoveryResponse
 	// DiscoveryServiceRefresh discovery service refresh interval
 	DiscoveryServiceRefresh
-)
-
-// EventServiceType specifies the type of event service to use
-type EventServiceType int
-
-const (
-	// DeliverEventServiceType uses the Deliver Service for block and filtered-block events
-	DeliverEventServiceType EventServiceType = iota
-	// EventHubEventServiceType uses the Event Hub for block events
-	EventHubEventServiceType
+	// SelectionServiceRefresh selection service refresh interval
+	SelectionServiceRefresh
 )
 
 // Providers represents the SDK configured service providers context.
 type Providers interface {
-	DiscoveryProvider() DiscoveryProvider
 	LocalDiscoveryProvider() LocalDiscoveryProvider
-	SelectionProvider() SelectionProvider
 	ChannelProvider() ChannelProvider
 	InfraProvider() InfraProvider
 	EndpointConfig() EndpointConfig
+}
+
+// CertPool is a thread safe wrapper around the x509 standard library
+// cert pool implementation.
+type CertPool interface {
+	// Get returns the cert pool, optionally adding the provided certs
+	Get() (*x509.CertPool, error)
+	//Add allows adding certificates to CertPool
+	//Call Get() after Add() to get the updated certpool
+	Add(certs ...*x509.Certificate)
 }

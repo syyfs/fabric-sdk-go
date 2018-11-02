@@ -8,8 +8,9 @@ package channel
 
 import (
 	"testing"
-
 	"time"
+
+	"github.com/stretchr/testify/assert"
 
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/core"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
@@ -21,12 +22,23 @@ import (
 	"github.com/hyperledger/fabric-sdk-go/pkg/fab/mocks"
 	"github.com/hyperledger/fabric-sdk-go/pkg/fab/txn"
 	mspmocks "github.com/hyperledger/fabric-sdk-go/pkg/msp/test/mockmsp"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestCreateTxnID(t *testing.T) {
 	transactor := createTransactor(t)
-	createTxnID(t, transactor)
+
+	txh := createTxnID(t, transactor)
+	assert.NotEmpty(t, txh.Nonce())
+	assert.NotEmpty(t, txh.Creator())
+	assert.NotEmpty(t, txh.TransactionID())
+
+	creator := []byte("creator")
+	nonce := []byte("12345")
+
+	txh = createTxnID(t, transactor, fab.WithCreator(creator), fab.WithNonce(nonce))
+	assert.Equal(t, nonce, txh.Nonce())
+	assert.Equal(t, creator, txh.Creator())
+	assert.NotEmpty(t, txh.TransactionID())
 }
 
 func TestTransactionProposal(t *testing.T) {
@@ -78,8 +90,8 @@ func createTransactor(t *testing.T) *Transactor {
 	return transactor
 }
 
-func createTxnID(t *testing.T, transactor *Transactor) fab.TransactionHeader {
-	txh, err := transactor.CreateTransactionHeader()
+func createTxnID(t *testing.T, transactor *Transactor, opts ...fab.TxnHeaderOpt) fab.TransactionHeader {
+	txh, err := transactor.CreateTransactionHeader(opts...)
 	assert.Nil(t, err, "creation of transaction ID failed")
 
 	return txh
@@ -130,6 +142,18 @@ func TestOrderersFromChannelCfg(t *testing.T) {
 	assert.NotEmpty(t, o)
 }
 
+// TestOrderersFromChannel - tests scenario where err should not be returned if channel config is not found
+//instead, empty orderers list should be returned
+func TestOrderersFromChannel(t *testing.T) {
+	user := mspmocks.NewMockSigningIdentity("test", "test")
+	ctx := mocks.NewMockContext(user)
+
+	o, err := orderersFromChannel(ctx, "invalid-channel-id")
+	assert.Nil(t, err)
+	assert.NotNil(t, o)
+	assert.Zero(t, len(o))
+}
+
 // TestOrderersFromChannelCfg uses an orderer that does not exist in the configuration.
 func TestOrderersFromChannelCfgBadTLS(t *testing.T) {
 	user := mspmocks.NewMockSigningIdentity("test", "test")
@@ -154,7 +178,7 @@ func TestOrderersURLOverride(t *testing.T) {
 
 	//Override orderer URL in endpoint config
 	//Create an empty network config
-	networkConfig := fab.NetworkConfig{}
+	networkConfig := endpointConfigEntity{}
 	err = lookup.New(configBackends...).UnmarshalKey("orderers", &networkConfig.Orderers)
 	if err != nil {
 		t.Fatal("failed to unmarshal orderer")
@@ -170,7 +194,7 @@ func TestOrderersURLOverride(t *testing.T) {
 	backends = append(backends, configBackends...)
 	endpointCfg, err := fabImpl.ConfigFromBackend(backends...)
 	if err != nil {
-		t.Fatal("failed to get endpoint config")
+		t.Fatal("failed to get endpoint config", err)
 	}
 
 	user := mspmocks.NewMockSigningIdentity("test", "test")
@@ -184,4 +208,12 @@ func TestOrderersURLOverride(t *testing.T) {
 	assert.NotEmpty(t, o)
 	assert.Equal(t, 1, len(o), "expected one orderer from response orderers list")
 	assert.Equal(t, sampleOrdererURL, o[0].URL(), "orderer URL override from endpointconfig channels is not working as expected")
+}
+
+//endpointConfigEntity contains endpoint config elements needed by endpointconfig
+type endpointConfigEntity struct {
+	Channels      map[string]fab.ChannelEndpointConfig
+	Organizations map[string]fabImpl.OrganizationConfig
+	Orderers      map[string]fabImpl.OrdererConfig
+	Peers         map[string]fabImpl.PeerConfig
 }

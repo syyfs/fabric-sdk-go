@@ -21,6 +21,7 @@ import (
 	fabmocks "github.com/hyperledger/fabric-sdk-go/pkg/fab/mocks"
 	mspmocks "github.com/hyperledger/fabric-sdk-go/pkg/msp/test/mockmsp"
 	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
 )
 
 var (
@@ -34,11 +35,11 @@ func TestSeek(t *testing.T) {
 	channelID := "testchannel"
 
 	dispatcher := New(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg(channelID),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		clientmocks.NewProviderFactory().Provider(
 			delivermocks.NewConnection(
 				clientmocks.WithLedger(servicemocks.NewMockLedger(delivermocks.BlockEventFactory, sourceURL)),
@@ -69,7 +70,7 @@ func TestSeek(t *testing.T) {
 			t.Fatalf("error from seek request: %s", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatalf("timeout waiting for deliver status response")
+		t.Fatal("timeout waiting for deliver status response")
 	}
 
 	// Disconnect
@@ -95,11 +96,11 @@ func TestUnauthorized(t *testing.T) {
 	channelID := "testchannel"
 
 	dispatcher := New(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg(channelID),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		clientmocks.NewProviderFactory().Provider(
 			delivermocks.NewConnection(
 				clientmocks.WithResults(
@@ -136,7 +137,7 @@ func TestUnauthorized(t *testing.T) {
 		select {
 		case event := <-conneventch:
 			if event.Connected {
-				t.Logf("Got connected event")
+				t.Log("Got connected event")
 			} else {
 				t.Logf("Got disconnected event with error [%s]", event.Err)
 				return
@@ -162,11 +163,11 @@ func TestBlockEvents(t *testing.T) {
 	ledger := servicemocks.NewMockLedger(delivermocks.BlockEventFactory, sourceURL)
 
 	dispatcher := New(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg(channelID),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		clientmocks.NewProviderFactory().Provider(
 			delivermocks.NewConnection(
 				clientmocks.WithLedger(ledger),
@@ -206,6 +207,16 @@ func TestBlockEvents(t *testing.T) {
 
 	checkBlockEvents(eventch, t)
 
+	lastBlockReceived := dispatcher.LastBlockNum()
+	assert.Equal(t, uint64(0), lastBlockReceived)
+
+	ledger.NewBlock(channelID)
+
+	checkBlockEvents(eventch, t)
+
+	lastBlockReceived = dispatcher.LastBlockNum()
+	assert.Equal(t, uint64(1), lastBlockReceived)
+
 	// Unregister block events
 	dispatcherEventch <- esdispatcher.NewUnregisterEvent(reg)
 
@@ -221,13 +232,13 @@ func checkBlockEvents(eventch chan *fab.BlockEvent, t *testing.T) {
 	select {
 	case event, ok := <-eventch:
 		if !ok {
-			t.Fatalf("unexpected closed channel")
+			t.Fatal("unexpected closed channel")
 		}
 		if event.SourceURL != sourceURL {
 			t.Fatalf("expecting source URL [%s] but got [%s]", sourceURL, event.SourceURL)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatalf("timed out waiting for block event")
+		t.Fatal("timed out waiting for block event")
 	}
 }
 
@@ -236,11 +247,11 @@ func TestFilteredBlockEvents(t *testing.T) {
 	ledger := servicemocks.NewMockLedger(delivermocks.FilteredBlockEventFactory, sourceURL)
 
 	dispatcher := New(
-		fabmocks.NewMockContextWithCustomDiscovery(
+		fabmocks.NewMockContext(
 			mspmocks.NewMockSigningIdentity("user1", "Org1MSP"),
-			clientmocks.NewDiscoveryProvider(peer1, peer2),
 		),
 		fabmocks.NewMockChannelCfg(channelID),
+		clientmocks.NewDiscoveryService(peer1, peer2),
 		clientmocks.NewProviderFactory().Provider(
 			delivermocks.NewConnection(
 				clientmocks.WithLedger(ledger),
@@ -295,7 +306,7 @@ func checkFilteredBlockEvents(eventch chan *fab.FilteredBlockEvent, t *testing.T
 	select {
 	case event, ok := <-eventch:
 		if !ok {
-			t.Fatalf("unexpected closed channel")
+			t.Fatal("unexpected closed channel")
 		}
 		if event.FilteredBlock.ChannelId != channelID {
 			t.Fatalf("expecting channelID [%s] but got [%s]", channelID, event.FilteredBlock.ChannelId)
@@ -304,6 +315,6 @@ func checkFilteredBlockEvents(eventch chan *fab.FilteredBlockEvent, t *testing.T
 			t.Fatalf("expecting source URL [%s] but got [%s]", sourceURL, event.SourceURL)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatalf("timed out waiting for filtered block event")
+		t.Fatal("timed out waiting for filtered block event")
 	}
 }

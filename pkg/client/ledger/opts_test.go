@@ -18,7 +18,7 @@ import (
 
 func TestWithTargetURLsInvalid(t *testing.T) {
 	ctx := setupTestContext("test", "Org1MSP")
-	opt := WithTargetURLs("invalid")
+	opt := WithTargetEndpoints("invalid")
 
 	mockConfig := &fcmocks.MockConfig{}
 
@@ -36,7 +36,7 @@ func TestWithTargetURLsInvalid(t *testing.T) {
 
 func TestWithTargetURLsValid(t *testing.T) {
 	ctx := setupTestContext("test", "Org1MSP")
-	opt := WithTargetURLs("127.0.0.1:7050")
+	opt := WithTargetEndpoints("127.0.0.1:7050")
 
 	mockConfig := &fcmocks.MockConfig{}
 
@@ -83,7 +83,7 @@ func TestTimeoutOptions(t *testing.T) {
 
 	options := []RequestOption{WithTimeout(fab.PeerResponse, 20*time.Second),
 		WithTimeout(fab.ResMgmt, 25*time.Second), WithTimeout(fab.OrdererResponse, 30*time.Second),
-		WithTimeout(fab.EventHubConnection, 35*time.Second), WithTimeout(fab.Execute, 40*time.Second),
+		WithTimeout(fab.PeerConnection, 35*time.Second), WithTimeout(fab.Execute, 40*time.Second),
 		WithTimeout(fab.Query, 45*time.Second)}
 
 	for _, option := range options {
@@ -93,7 +93,7 @@ func TestTimeoutOptions(t *testing.T) {
 	assert.True(t, opts.Timeouts[fab.PeerResponse] == 20*time.Second, "timeout value by type didn't match with one supplied")
 	assert.True(t, opts.Timeouts[fab.ResMgmt] == 25*time.Second, "timeout value by type didn't match with one supplied")
 	assert.True(t, opts.Timeouts[fab.OrdererResponse] == 30*time.Second, "timeout value by type didn't match with one supplied")
-	assert.True(t, opts.Timeouts[fab.EventHubConnection] == 35*time.Second, "timeout value by type didn't match with one supplied")
+	assert.True(t, opts.Timeouts[fab.PeerConnection] == 35*time.Second, "timeout value by type didn't match with one supplied")
 	assert.True(t, opts.Timeouts[fab.Execute] == 40*time.Second, "timeout value by type didn't match with one supplied")
 	assert.True(t, opts.Timeouts[fab.Query] == 45*time.Second, "timeout value by type didn't match with one supplied")
 

@@ -13,17 +13,16 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/pem"
+	"fmt"
 	"log"
 	"math/big"
 	"strings"
 	"testing"
 	"time"
 
-	"fmt"
-
-	"encoding/pem"
-
 	"github.com/golang/protobuf/proto"
+	"github.com/hyperledger/fabric-sdk-go/pkg/core/config/comm/tls"
 	"github.com/hyperledger/fabric-sdk-go/pkg/fab/mocks"
 	mb "github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/msp"
 	"github.com/stretchr/testify/assert"
@@ -37,7 +36,11 @@ func TestCertSignedWithUnknownAuthority(t *testing.T) {
 	cfg := mocks.NewMockChannelCfg("")
 	// Test good config input
 	cfg.MockMSPs = []*mb.MSPConfig{buildMSPConfig(goodMSPID, []byte(validRootCA))}
-	m, err := New(Context{Providers: ctx}, cfg)
+	fabCertPool, err := tls.NewCertPool(false)
+	assert.Nil(t, err)
+	endpointConfig := &mocks.MockConfig{CustomTLSCACertPool: fabCertPool}
+
+	m, err := New(Context{Providers: ctx, EndpointConfig: endpointConfig}, cfg)
 	assert.Nil(t, err)
 	assert.NotNil(t, m)
 
@@ -49,8 +52,9 @@ func TestCertSignedWithUnknownAuthority(t *testing.T) {
 	assert.Nil(t, err)
 	err = m.Validate(goodEndorser)
 	if !strings.Contains(err.Error(), "certificate signed by unknown authority") {
-		t.Fatalf("Expected error:'supplied identity is not valid: x509: certificate signed by unknown authority'")
+		t.Fatal("Expected error:'supplied identity is not valid: x509: certificate signed by unknown authority'")
 	}
+
 }
 
 //TestRevokedCertificate
@@ -60,11 +64,11 @@ func TestRevokedCertificate(t *testing.T) {
 	ctx := mocks.NewMockProviderContext()
 	cfg := mocks.NewMockChannelCfg("")
 	if err != nil {
-		t.Fatalf("Error %v", err)
+		t.Fatalf("Error %s", err)
 	}
 	// Test good config input
 	cfg.MockMSPs = []*mb.MSPConfig{buildMSPConfig(goodMSPID, []byte(orgTwoCA))}
-	m, err := New(Context{Providers: ctx}, cfg)
+	m, err := New(Context{Providers: ctx, EndpointConfig: mocks.NewMockEndpointConfig()}, cfg)
 	assert.Nil(t, err)
 	assert.NotNil(t, m)
 
@@ -77,7 +81,7 @@ func TestRevokedCertificate(t *testing.T) {
 	err = m.Validate(goodEndorser)
 	assert.NotNil(t, err)
 	if !strings.Contains(err.Error(), "The certificate has been revoked") {
-		t.Fatalf("Expected error for revoked certificate")
+		t.Fatal("Expected error for revoked certificate")
 	}
 
 }
@@ -89,11 +93,15 @@ func TestCertificateDates(t *testing.T) {
 	ctx := mocks.NewMockProviderContext()
 	cfg := mocks.NewMockChannelCfg("")
 	if err != nil {
-		t.Fatalf("Error %v", err)
+		t.Fatalf("Error %s", err)
 	}
+	fabCertPool, err := tls.NewCertPool(false)
+	assert.Nil(t, err)
+	endpointConfig := &mocks.MockConfig{CustomTLSCACertPool: fabCertPool}
+
 	// Test good config input
 	cfg.MockMSPs = []*mb.MSPConfig{buildMSPConfig(goodMSPID, []byte(orgTwoCA))}
-	m, err := New(Context{Providers: ctx}, cfg)
+	m, err := New(Context{Providers: ctx, EndpointConfig: endpointConfig}, cfg)
 	assert.Nil(t, err)
 	assert.NotNil(t, m)
 
@@ -104,7 +112,7 @@ func TestCertificateDates(t *testing.T) {
 	assert.Nil(t, err)
 	err = m.Validate(goodEndorser)
 	if !strings.Contains(err.Error(), "Certificate provided is not valid until later date") {
-		t.Fatalf("Expected error 'Certificate provided is not valid until later date'")
+		t.Fatal("Expected error 'Certificate provided is not valid until later date'")
 	}
 
 	// Certificate is in the past
@@ -114,7 +122,7 @@ func TestCertificateDates(t *testing.T) {
 	assert.Nil(t, err)
 	err = m.Validate(goodEndorser)
 	if !strings.Contains(err.Error(), "Certificate provided has expired") {
-		t.Fatalf("Expected error 'Certificate provided has expired'")
+		t.Fatal("Expected error 'Certificate provided has expired'")
 	}
 }
 
@@ -125,15 +133,19 @@ func TestNewMembership(t *testing.T) {
 	ctx := mocks.NewMockProviderContext()
 	cfg := mocks.NewMockChannelCfg("")
 
+	fabCertPool, err := tls.NewCertPool(false)
+	assert.Nil(t, err)
+	endpointConfig := &mocks.MockConfig{CustomTLSCACertPool: fabCertPool}
+
 	// Test bad config input
 	cfg.MockMSPs = []*mb.MSPConfig{buildMSPConfig(goodMSPID, []byte("invalid"))}
-	m, err := New(Context{Providers: ctx}, cfg)
+	m, err := New(Context{Providers: ctx, EndpointConfig: endpointConfig}, cfg)
 	assert.NotNil(t, err)
 	assert.Nil(t, m)
 
 	// Test good config input
 	cfg.MockMSPs = []*mb.MSPConfig{buildMSPConfig(goodMSPID, []byte(validRootCA))}
-	m, err = New(Context{Providers: ctx}, cfg)
+	m, err = New(Context{Providers: ctx, EndpointConfig: endpointConfig}, cfg)
 	assert.Nil(t, err)
 	assert.NotNil(t, m)
 
@@ -311,7 +323,7 @@ type certificate struct {
 func encodeCertToMemory(c certificate) string {
 	b, err := asn1.Marshal(c)
 	if err != nil {
-		return fmt.Sprintf("Failed marshaling cert: %v", err)
+		return fmt.Sprintf("Failed marshaling cert: %s", err)
 	}
 	block := &pem.Block{
 		Bytes: b,

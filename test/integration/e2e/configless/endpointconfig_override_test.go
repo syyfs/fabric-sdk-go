@@ -9,8 +9,9 @@ package configless
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
+	"fmt"
 	"io/ioutil"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -24,17 +25,18 @@ import (
 	"github.com/hyperledger/fabric-sdk-go/pkg/core/config/endpoint"
 	"github.com/hyperledger/fabric-sdk-go/pkg/core/cryptosuite"
 	"github.com/hyperledger/fabric-sdk-go/pkg/core/logging/api"
+	logApi "github.com/hyperledger/fabric-sdk-go/pkg/core/logging/api"
 	"github.com/hyperledger/fabric-sdk-go/pkg/util/pathvar"
 	"github.com/hyperledger/fabric-sdk-go/test/integration"
 	"github.com/pkg/errors"
 )
 
 // endpointconfig_override_test.go is an example of programmatically configuring the sdk by injecting instances that implement EndpointConfig's functions (representing the sdk's configs)
-// for the sake of overriding EndpointConfig integration tests, the structure variables below are similar to what is found in /test/fixtures/config/config_test.yaml
+// for the sake of overriding EndpointConfig integration tests, the structure variables below are similar to what is found in /test/fixtures/config/config_e2e.yaml
 // application developers can fully override these functions to load configs in any way that suit their application need
 
 // NOTE: 1. to support test local (flag: TEST_LOCAL=true to use localhost:* URLs for peers, orderers, CAs everywhere), new...() constructor functions where created to test if this flag
-//       is enabled using verifyIsLocal...() function calls. These calls will basically switch config URLs (peers, orderers or CA configs) / EventURLs (peer configs) into "localhost:..."
+//       is enabled using verifyIsLocal...() function calls. These calls will basically switch config URLs (peers, orderers or CA configs) into "localhost:..."
 //       Make sure your local /etc/hosts file does not have any ip-dns mapping entries for peers/orderers/CAs
 //
 //       2. the test assumes the use of the default channel block used in the remaining regular integration tests (for example look at Orderer.Addresses value in
@@ -44,20 +46,39 @@ import (
 //       or if you want to use an existing channel block but still want to change the orderer URL, then you can implement EntityMatchers logic for your orderers
 //       which is commented out in the code below for reference. Using EntityMatchers will allow the configs to be able to find mapped Orderers/Peers/CA URLs.
 
+// ClientConfig provides the definition of the client configuration
+type clientConfig struct {
+	Organization    string
+	Logging         logApi.LoggingType
+	CryptoConfig    msp.CCType
+	TLSCerts        endpoint.MutualTLSConfig
+	TLSKey          []byte
+	TLSCert         []byte
+	CredentialStore msp.CredentialStoreType
+}
+
+// caConfig defines a CA configuration in identity config
+type caConfig struct {
+	URL        string
+	TLSCACerts endpoint.MutualTLSConfig
+	Registrar  msp.EnrollCredentials
+	CAName     string
+}
+
 var (
 	localhostRep = "localhost:"
 	dnsMatchRegX = ".*:"
-	clientConfig = msp.ClientConfig{
+	client       = clientConfig{
 		Organization:    "org1",
 		Logging:         api.LoggingType{Level: "info"},
-		CryptoConfig:    msp.CCType{Path: "${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}"},
+		CryptoConfig:    msp.CCType{Path: pathvar.Subst("${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}")},
 		CredentialStore: msp.CredentialStoreType{Path: "/tmp/msp"},
 		TLSCerts: endpoint.MutualTLSConfig{Client: endpoint.TLSKeyPair{
-			Key:  endpoint.TLSConfig{Path: pathvar.Subst("${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/test/fixtures/config/mutual_tls/client_sdk_go-key.pem")},
-			Cert: endpoint.TLSConfig{Path: pathvar.Subst("${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/test/fixtures/config/mutual_tls/client_sdk_go.pem")}}},
+			Key:  newTLSConfig("${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}/peerOrganizations/tls.example.com/users/User1@tls.example.com/tls/client.key"),
+			Cert: newTLSConfig("${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}/peerOrganizations/tls.example.com/users/User1@tls.example.com/tls/client.crt")}},
 	}
 
-	channelsConfig = map[string]fab.ChannelNetworkConfig{
+	channelsConfig = map[string]fab.ChannelEndpointConfig{
 		"mychannel": {
 			Orderers: []string{"orderer.example.com"},
 			Peers: map[string]fab.PeerChannelConfig{
@@ -78,6 +99,13 @@ var (
 						MaxBackoff:     5 * time.Second,
 						BackoffFactor:  2.0,
 					},
+				},
+				EventService: fab.EventServicePolicy{
+					ResolverStrategy:                 fab.MinBlockHeightStrategy,
+					MinBlockHeightResolverMode:       fab.ResolveByThreshold,
+					BlockHeightLagThreshold:          5,
+					ReconnectBlockHeightLagThreshold: 10,
+					PeerMonitorPeriod:                5 * time.Second,
 				},
 			},
 		},
@@ -125,7 +153,7 @@ var (
 			CertificateAuthorities: []string{"ca.org2.example.com"},
 		},
 		"ordererorg": {
-			MSPID:      "OrdererOrg",
+			MSPID:      "OrdererMSP",
 			CryptoPath: "ordererOrganizations/example.com/users/{username}@example.com/msp",
 		},
 	}
@@ -141,16 +169,13 @@ var (
 				"fail-fast":                false,
 				"allow-insecure":           false,
 			},
-			TLSCACerts: endpoint.TLSConfig{
-				Path: "${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}/ordererOrganizations/example.com/tlsca/tlsca.example.com-cert.pem",
-			},
+			TLSCACert: tlsCertByBytes("${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}/ordererOrganizations/example.com/tlsca/tlsca.example.com-cert.pem"),
 		},
 	}
 
 	peersConfig = map[string]fab.PeerConfig{
 		"peer0.org1.example.com": {
-			URL:      "peer0.org1.example.com:7051",
-			EventURL: "peer0.org1.example.com:7053",
+			URL: "peer0.org1.example.com:7051",
 			GRPCOptions: map[string]interface{}{
 				"ssl-target-name-override": "peer0.org1.example.com",
 				"keep-alive-time":          0 * time.Second,
@@ -159,13 +184,10 @@ var (
 				"fail-fast":                false,
 				"allow-insecure":           false,
 			},
-			TLSCACerts: endpoint.TLSConfig{
-				Path: "${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem",
-			},
+			TLSCACert: tlsCertByBytes("${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem"),
 		},
 		"peer0.org2.example.com": {
-			URL:      "peer0.org2.example.com:8051",
-			EventURL: "peer0.org2.example.com:8053",
+			URL: "peer0.org2.example.com:8051",
 			GRPCOptions: map[string]interface{}{
 				"ssl-target-name-override": "peer0.org2.example.com",
 				"keep-alive-time":          0 * time.Second,
@@ -174,24 +196,45 @@ var (
 				"fail-fast":                false,
 				"allow-insecure":           false,
 			},
-			TLSCACerts: endpoint.TLSConfig{
-				Path: "${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}/peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem",
-			},
+			TLSCACert: tlsCertByBytes("${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}/peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem"),
 		},
 	}
 
-	caConfig = map[string]msp.CAConfig{
+	peersByLocalURL = map[string]fab.PeerConfig{
+		"localhost:7051": {
+			URL: "localhost:7051",
+			GRPCOptions: map[string]interface{}{
+				"ssl-target-name-override": "peer0.org1.example.com",
+				"keep-alive-time":          0 * time.Second,
+				"keep-alive-timeout":       20 * time.Second,
+				"keep-alive-permit":        false,
+				"fail-fast":                false,
+				"allow-insecure":           false,
+			},
+			TLSCACert: tlsCertByBytes("${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem"),
+		},
+		"localhost:8051": {
+			URL: "localhost:8051",
+			GRPCOptions: map[string]interface{}{
+				"ssl-target-name-override": "peer0.org2.example.com",
+				"keep-alive-time":          0 * time.Second,
+				"keep-alive-timeout":       20 * time.Second,
+				"keep-alive-permit":        false,
+				"fail-fast":                false,
+				"allow-insecure":           false,
+			},
+			TLSCACert: tlsCertByBytes("${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}/peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem"),
+		},
+	}
+
+	caConfigObj = map[string]caConfig{
 		"ca.org1.example.com": {
 			URL: "https://ca.org1.example.com:7054",
 			TLSCACerts: endpoint.MutualTLSConfig{
-				Path: "${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/test/fixtures/fabricca/tls/certs/ca_root.pem",
+				Path: pathvar.Subst("${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem"),
 				Client: endpoint.TLSKeyPair{
-					Key: endpoint.TLSConfig{
-						Path: "${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/test/fixtures/fabricca/tls/certs/client/client_fabric_client-key.pem",
-					},
-					Cert: endpoint.TLSConfig{
-						Path: "${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/test/fixtures/fabricca/tls/certs/client/client_fabric_client.pem",
-					},
+					Key:  newTLSConfig("${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}/peerOrganizations/tls.example.com/users/User1@tls.example.com/tls/client.key"),
+					Cert: newTLSConfig("${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}/peerOrganizations/tls.example.com/users/User1@tls.example.com/tls/client.crt"),
 				},
 			},
 			Registrar: msp.EnrollCredentials{
@@ -203,14 +246,10 @@ var (
 		"ca.org2.example.com": {
 			URL: "https://ca.org2.example.com:8054",
 			TLSCACerts: endpoint.MutualTLSConfig{
-				Path: "${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/test/fixtures/fabricca/tls/certs/ca_root.pem",
+				Path: pathvar.Subst("${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}/peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem"),
 				Client: endpoint.TLSKeyPair{
-					Key: endpoint.TLSConfig{
-						Path: "${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/test/fixtures/fabricca/tls/certs/client/client_fabric_client-key.pem",
-					},
-					Cert: endpoint.TLSConfig{
-						Path: "${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/test/fixtures/fabricca/tls/certs/client/client_fabric_client.pem",
-					},
+					Key:  newTLSConfig("${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}/peerOrganizations/tls.example.com/users/User1@tls.example.com/tls/client.key"),
+					Cert: newTLSConfig("${GOPATH}/src/github.com/hyperledger/fabric-sdk-go/${CRYPTOCONFIG_FIXTURES_PATH}/peerOrganizations/tls.example.com/users/User1@tls.example.com/tls/client.crt"),
 				},
 			},
 			Registrar: msp.EnrollCredentials{
@@ -222,22 +261,16 @@ var (
 	}
 
 	networkConfig = fab.NetworkConfig{
-		Name:          "config-overridden network",
-		Description:   "This config structure is an example of overriding the sdk config by injecting interfaces instead of using a config file",
-		Client:        clientConfig,
 		Channels:      channelsConfig,
 		Organizations: orgsConfig,
 		Orderers:      newOrderersConfig(),
 		Peers:         newPeersConfig(),
-		CertificateAuthorities: newCAsConfig(),
 		// EntityMatchers are not used in this implementation
 		//EntityMatchers: entityMatchers,
 	}
 
 	// creating instances of each interface to be referenced in the integration tests:
 	timeoutImpl          = &exampleTimeout{}
-	mspIDImpl            = &exampleMSPID{}
-	peerMSPIDImpl        = &examplePeerMSPID{}
 	orderersConfigImpl   = newOrderersConfigImpl()
 	ordererConfigImpl    = &exampleOrdererConfig{}
 	peersConfigImpl      = newPeersConfigImpl()
@@ -248,13 +281,10 @@ var (
 	channelPeersImpl     = &exampleChannelPeers{}
 	channelOrderersImpl  = &exampleChannelOrderers{}
 	tlsCACertPoolImpl    = newTLSCACertPool(false)
-	eventServiceTypeImpl = &exampleEventServiceType{}
 	tlsClientCertsImpl   = &exampleTLSClientCerts{}
 	cryptoConfigPathImpl = &exampleCryptoConfigPath{}
 	endpointConfigImpls  = []interface{}{
 		timeoutImpl,
-		mspIDImpl,
-		peerMSPIDImpl,
 		orderersConfigImpl,
 		ordererConfigImpl,
 		peersConfigImpl,
@@ -265,7 +295,6 @@ var (
 		channelPeersImpl,
 		channelOrderersImpl,
 		tlsCACertPoolImpl,
-		eventServiceTypeImpl,
 		tlsClientCertsImpl,
 		cryptoConfigPathImpl,
 	}
@@ -274,10 +303,9 @@ var (
 type exampleTimeout struct{}
 
 var defaultTypes = map[fab.TimeoutType]time.Duration{
-	fab.EndorserConnection:       time.Second * 10,
+	fab.PeerConnection:           time.Second * 10,
 	fab.PeerResponse:             time.Minute * 3,
 	fab.DiscoveryGreylistExpiry:  time.Second * 10,
-	fab.EventHubConnection:       time.Second * 15,
 	fab.EventReg:                 time.Second * 15,
 	fab.OrdererConnection:        time.Second * 15,
 	fab.OrdererResponse:          time.Minute * 2,
@@ -291,6 +319,7 @@ var defaultTypes = map[fab.TimeoutType]time.Duration{
 	fab.ChannelConfigRefresh:     time.Minute * 90,
 	fab.ChannelMembershipRefresh: time.Second * 60,
 	fab.DiscoveryServiceRefresh:  time.Second * 10,
+	fab.SelectionServiceRefresh:  time.Minute * 15,
 	// EXPERIMENTAL - do we need this to be configurable?
 	fab.CacheSweepInterval: time.Second * 15,
 }
@@ -304,32 +333,14 @@ func (m *exampleTimeout) Timeout(tType fab.TimeoutType) time.Duration {
 	return t
 }
 
-type exampleMSPID struct{}
-
-//MSPID overrides EndpointConfig's MSPID function which returns the mspID for the given org name in the arg
-func (m *exampleMSPID) MSPID(org string) (string, error) {
-	//lowercase org name to make it case insensitive, depends on application preference, for the sake of this example, make it case in-sensitive
-	mspID := orgsConfig[strings.ToLower(org)].MSPID
-	if mspID == "" {
-		return "", errors.Errorf("MSP ID is empty for org: %s", org)
-	}
-
-	return mspID, nil
-}
-
-type examplePeerMSPID struct{}
-
-//PeerMSPID overrides EndpointConfig's PeerMSPID function which returns the mspID for the given org name in the arg
-func (m *examplePeerMSPID) PeerMSPID(name string) (string, error) {
-	var mspID string
-
+//PeerMSPID  returns the mspID for the given org name in the arg
+func PeerMSPID(name string) (string, bool) {
 	// Find organisation/msp that peer belongs to
 	for _, org := range orgsConfig {
 		for i := 0; i < len(org.Peers); i++ {
 			if strings.EqualFold(org.Peers[i], name) {
 				// peer belongs to this org add org msp
-				mspID = org.MSPID
-				break
+				return org.MSPID, true
 				// EntityMatchers are not used in this implementation, below is an example of how to use them if needed
 				//} else {
 				//
@@ -342,12 +353,12 @@ func (m *examplePeerMSPID) PeerMSPID(name string) (string, error) {
 		}
 	}
 
-	return mspID, nil
+	return "", false
 }
 
-func verifyIsLocalCAsURLs(caConfigs map[string]msp.CAConfig) map[string]msp.CAConfig {
+func verifyIsLocalCAsURLs(caConfigs map[string]caConfig) map[string]caConfig {
 	re := regexp.MustCompile(dnsMatchRegX)
-	var newCfg = make(map[string]msp.CAConfig)
+	var newCfg = make(map[string]caConfig)
 	// for local integration tests, replace all urls DNS to localhost:
 	if integration.IsLocal() {
 		for k, caCfg := range caConfigs {
@@ -358,9 +369,9 @@ func verifyIsLocalCAsURLs(caConfigs map[string]msp.CAConfig) map[string]msp.CACo
 	return newCfg
 }
 
-func newCAsConfig() map[string]msp.CAConfig {
-	c := verifyIsLocalCAsURLs(caConfig)
-	caConfig = c
+func newCAsConfig() map[string]caConfig {
+	c := verifyIsLocalCAsURLs(caConfigObj)
+	caConfigObj = c
 	return c
 }
 
@@ -407,27 +418,24 @@ type exampleOrderersConfig struct {
 }
 
 //OrderersConfig overrides EndpointConfig's OrderersConfig function which returns the ordererConfigs list
-func (m *exampleOrderersConfig) OrderersConfig() ([]fab.OrdererConfig, error) {
+func (m *exampleOrderersConfig) OrderersConfig() []fab.OrdererConfig {
 	orderers := []fab.OrdererConfig{}
 
 	for _, orderer := range orderersConfig {
 
-		if orderer.TLSCACerts.Path != "" {
-			orderer.TLSCACerts.Path = pathvar.Subst(orderer.TLSCACerts.Path)
-		} else if len(orderer.TLSCACerts.Pem) == 0 && !m.isSystemCertPool {
-			return nil, errors.Errorf("Orderer has no certs configured. Make sure TLSCACerts.Pem or TLSCACerts.Path is set for %s", orderer.URL)
+		if orderer.TLSCACert == nil && !m.isSystemCertPool {
+			return nil
 		}
-
 		orderers = append(orderers, orderer)
 	}
 
-	return orderers, nil
+	return orderers
 }
 
 type exampleOrdererConfig struct{}
 
 //OrdererConfig overrides EndpointConfig's OrdererConfig function which returns the ordererConfig instance for the name/URL arg
-func (m *exampleOrdererConfig) OrdererConfig(ordererNameOrURL string) (*fab.OrdererConfig, error) {
+func (m *exampleOrdererConfig) OrdererConfig(ordererNameOrURL string) (*fab.OrdererConfig, bool) {
 	orderer, ok := networkConfig.Orderers[strings.ToLower(ordererNameOrURL)]
 	if !ok {
 		// EntityMatchers are not used in this implementation, below is an example of how to use them if needed, see default implementation for live example
@@ -436,14 +444,10 @@ func (m *exampleOrdererConfig) OrdererConfig(ordererNameOrURL string) (*fab.Orde
 		//	return nil, errors.WithStack(status.New(status.ClientStatus, status.NoMatchingOrdererEntity.ToInt32(), "no matching orderer config found", nil))
 		//}
 		//orderer = *matchingOrdererConfig
-		return nil, errors.Errorf("orderer '%s' not found in the configs", ordererNameOrURL)
+		return nil, false
 	}
 
-	if orderer.TLSCACerts.Path != "" {
-		orderer.TLSCACerts.Path = pathvar.Subst(orderer.TLSCACerts.Path)
-	}
-
-	return &orderer, nil
+	return &orderer, true
 }
 
 type examplePeersConfig struct {
@@ -457,7 +461,6 @@ func verifyIsLocalPeersURLs(pConfig map[string]fab.PeerConfig) map[string]fab.Pe
 	if integration.IsLocal() {
 		for k, peer := range pConfig {
 			peer.URL = re.ReplaceAllString(peer.URL, localhostRep)
-			peer.EventURL = re.ReplaceAllString(peer.EventURL, localhostRep)
 			newConfigs[k] = peer
 		}
 	}
@@ -468,7 +471,7 @@ func verifyIsLocalPeersURLs(pConfig map[string]fab.PeerConfig) map[string]fab.Pe
 	return newConfigs
 }
 
-//newPeersConfigImpl will create a new examplePeersConfig instance with proper peers URLs and EventURLs (local vs normal) tests
+//newPeersConfigImpl will create a new examplePeersConfig instance with proper peers URLs (local vs normal) tests
 // local tests use localhost urls, while the remaining tests use default values as set in peersConfig var
 func newPeersConfigImpl() *examplePeersConfig {
 	pConfig := verifyIsLocalPeersURLs(peersConfig)
@@ -478,7 +481,7 @@ func newPeersConfigImpl() *examplePeersConfig {
 }
 
 //PeersConfig overrides EndpointConfig's PeersConfig function which returns the peersConfig list
-func (m *examplePeersConfig) PeersConfig(org string) ([]fab.PeerConfig, error) {
+func (m *examplePeersConfig) PeersConfig(org string) ([]fab.PeerConfig, bool) {
 	orgPeers := orgsConfig[strings.ToLower(org)].Peers
 	peers := []fab.PeerConfig{}
 
@@ -492,22 +495,18 @@ func (m *examplePeersConfig) PeersConfig(org string) ([]fab.PeerConfig, error) {
 			//}
 			//
 			//p = *matchingPeerConfig
-			return nil, err
+			return nil, false
 		}
-		if p.TLSCACerts.Path != "" {
-			p.TLSCACerts.Path = pathvar.Subst(p.TLSCACerts.Path)
-		}
-
 		peers = append(peers, p)
 	}
-	return peers, nil
+	return peers, true
 }
 
 func (m *examplePeersConfig) verifyPeerConfig(p fab.PeerConfig, peerName string, tlsEnabled bool) error {
 	if p.URL == "" {
 		return errors.Errorf("URL does not exist or empty for peer %s", peerName)
 	}
-	if tlsEnabled && len(p.TLSCACerts.Pem) == 0 && p.TLSCACerts.Path == "" && !m.isSystemCertPool {
+	if tlsEnabled && p.TLSCACert == nil && !m.isSystemCertPool {
 		return errors.Errorf("tls.certificate does not exist or empty for peer %s", peerName)
 	}
 	return nil
@@ -516,25 +515,32 @@ func (m *examplePeersConfig) verifyPeerConfig(p fab.PeerConfig, peerName string,
 type examplePeerConfig struct{}
 
 // PeerConfig overrides EndpointConfig's PeerConfig function which returns the peerConfig instance for the name/URL arg
-func (m *examplePeerConfig) PeerConfig(nameOrURL string) (*fab.PeerConfig, error) {
+func (m *examplePeerConfig) PeerConfig(nameOrURL string) (*fab.PeerConfig, bool) {
 	pcfg, ok := peersConfig[nameOrURL]
 	if ok {
-		return &pcfg, nil
+		return &pcfg, true
 	}
-	if pcfg.TLSCACerts.Path != "" {
-		pcfg.TLSCACerts.Path = pathvar.Subst(pcfg.TLSCACerts.Path)
-	}
-	// EntityMatchers are not used in this implementation
-	// see default implementation (pkg/fab/endpointconfig.go) to see how they're used
 
-	return nil, errors.Errorf("peer '%s' not found in the configs", nameOrURL)
+	if integration.IsLocal() {
+		pcfg, ok := peersByLocalURL[nameOrURL]
+		if ok {
+			return &pcfg, true
+		}
+	}
+
+	i := strings.Index(nameOrURL, ":")
+	if i > 0 {
+		return m.PeerConfig(nameOrURL[0:i])
+	}
+
+	return nil, false
 }
 
 type exampleNetworkConfig struct{}
 
 // NetworkConfig overrides EndpointConfig's NetworkConfig function which returns the full network Config instance
-func (m *exampleNetworkConfig) NetworkConfig() (*fab.NetworkConfig, error) {
-	return &networkConfig, nil
+func (m *exampleNetworkConfig) NetworkConfig() *fab.NetworkConfig {
+	return &networkConfig
 }
 
 type exampleNetworkPeers struct {
@@ -542,37 +548,33 @@ type exampleNetworkPeers struct {
 }
 
 //NetworkPeers overrides EndpointConfig's NetworkPeers function which returns the networkPeers list
-func (m *exampleNetworkPeers) NetworkPeers() ([]fab.NetworkPeer, error) {
+func (m *exampleNetworkPeers) NetworkPeers() []fab.NetworkPeer {
 	netPeers := []fab.NetworkPeer{}
 	// referencing another interface to call PeerMSPID to match config yaml content
-	peerMSPID := &examplePeerMSPID{}
 
 	for name, p := range networkConfig.Peers {
 
 		if err := m.verifyPeerConfig(p, name, endpoint.IsTLSEnabled(p.URL)); err != nil {
-			return nil, err
+			return nil
 		}
 
-		if p.TLSCACerts.Path != "" {
-			p.TLSCACerts.Path = pathvar.Subst(p.TLSCACerts.Path)
-		}
-
-		mspID, err := peerMSPID.PeerMSPID(name)
-		if err != nil {
-			return nil, errors.Errorf("failed to retrieve msp id for peer %s", name)
+		mspID, ok := PeerMSPID(name)
+		if !ok {
+			return nil
 		}
 
 		netPeer := fab.NetworkPeer{PeerConfig: p, MSPID: mspID}
 		netPeers = append(netPeers, netPeer)
 	}
 
-	return netPeers, nil
+	return netPeers
 }
+
 func (m *exampleNetworkPeers) verifyPeerConfig(p fab.PeerConfig, peerName string, tlsEnabled bool) error {
 	if p.URL == "" {
 		return errors.Errorf("URL does not exist or empty for peer %s", peerName)
 	}
-	if tlsEnabled && len(p.TLSCACerts.Pem) == 0 && p.TLSCACerts.Path == "" && !m.isSystemCertPool {
+	if tlsEnabled && p.TLSCACert == nil && !m.isSystemCertPool {
 		return errors.Errorf("tls.certificate does not exist or empty for peer %s", peerName)
 	}
 	return nil
@@ -581,7 +583,7 @@ func (m *exampleNetworkPeers) verifyPeerConfig(p fab.PeerConfig, peerName string
 type exampleChannelConfig struct{}
 
 // ChannelConfig overrides EndpointConfig's ChannelConfig function which returns the channelConfig instance for the channel name arg
-func (m *exampleChannelConfig) ChannelConfig(channelName string) (*fab.ChannelNetworkConfig, error) {
+func (m *exampleChannelConfig) ChannelConfig(channelName string) *fab.ChannelEndpointConfig {
 	ch, ok := channelsConfig[strings.ToLower(channelName)]
 	if !ok {
 		// EntityMatchers are not used in this implementation, below is an example of how to use them if needed
@@ -590,10 +592,10 @@ func (m *exampleChannelConfig) ChannelConfig(channelName string) (*fab.ChannelNe
 		//	return nil, errors.WithMessage(matchErr, "channel config not found")
 		//}
 		//return matchingChannel, nil
-		return nil, errors.Errorf("No channel found for '%s'", channelName)
+		return &fab.ChannelEndpointConfig{}
 	}
 
-	return &ch, nil
+	return &ch
 }
 
 type exampleChannelPeers struct {
@@ -601,10 +603,8 @@ type exampleChannelPeers struct {
 }
 
 // ChannelPeers overrides EndpointConfig's ChannelPeers function which returns the list of peers for the channel name arg
-func (m *exampleChannelPeers) ChannelPeers(channelName string) ([]fab.ChannelPeer, error) {
+func (m *exampleChannelPeers) ChannelPeers(channelName string) []fab.ChannelPeer {
 	peers := []fab.ChannelPeer{}
-	// referencing another interface to call PeerMSPID to match config yaml content
-	peerMSPID := &examplePeerMSPID{}
 
 	chConfig, ok := channelsConfig[strings.ToLower(channelName)]
 	if !ok {
@@ -616,7 +616,7 @@ func (m *exampleChannelPeers) ChannelPeers(channelName string) ([]fab.ChannelPee
 		//
 		//// reset 'name' with the mappedChannel as it's referenced further below
 		//chConfig = *matchingChannel
-		return nil, errors.Errorf("No channel found for '%s'", channelName)
+		return nil
 	}
 
 	for peerName, chPeerConfig := range chConfig.Peers {
@@ -630,20 +630,16 @@ func (m *exampleChannelPeers) ChannelPeers(channelName string) ([]fab.ChannelPee
 			//	continue
 			//}
 			//p = *matchingPeerConfig
-			return nil, errors.Errorf("No peer found '%s'", peerName)
+			return nil
 		}
 
 		if err := m.verifyPeerConfig(p, peerName, endpoint.IsTLSEnabled(p.URL)); err != nil {
-			return nil, err
+			return nil
 		}
 
-		if p.TLSCACerts.Path != "" {
-			p.TLSCACerts.Path = pathvar.Subst(p.TLSCACerts.Path)
-		}
-
-		mspID, err := peerMSPID.PeerMSPID(peerName)
-		if err != nil {
-			return nil, errors.Errorf("failed to retrieve msp id for peer %s", peerName)
+		mspID, ok := PeerMSPID(peerName)
+		if !ok {
+			return nil
 		}
 
 		networkPeer := fab.NetworkPeer{PeerConfig: p, MSPID: mspID}
@@ -653,14 +649,15 @@ func (m *exampleChannelPeers) ChannelPeers(channelName string) ([]fab.ChannelPee
 		peers = append(peers, peer)
 	}
 
-	return peers, nil
+	return peers
 
 }
+
 func (m *exampleChannelPeers) verifyPeerConfig(p fab.PeerConfig, peerName string, tlsEnabled bool) error {
 	if p.URL == "" {
 		return errors.Errorf("URL does not exist or empty for peer %s", peerName)
 	}
-	if tlsEnabled && len(p.TLSCACerts.Pem) == 0 && p.TLSCACerts.Path == "" && !m.isSystemCertPool {
+	if tlsEnabled && p.TLSCACert == nil && !m.isSystemCertPool {
 		return errors.Errorf("tls.certificate does not exist or empty for peer %s", peerName)
 	}
 	return nil
@@ -669,76 +666,57 @@ func (m *exampleChannelPeers) verifyPeerConfig(p fab.PeerConfig, peerName string
 type exampleChannelOrderers struct{}
 
 // ChannelOrderers overrides EndpointConfig's ChannelOrderers function which returns the list of orderers for the channel name arg
-func (m *exampleChannelOrderers) ChannelOrderers(channelName string) ([]fab.OrdererConfig, error) {
+func (m *exampleChannelOrderers) ChannelOrderers(channelName string) []fab.OrdererConfig {
 	// referencing other interfaces to call ChannelConfig and OrdererConfig to match config yaml content
 	chCfg := &exampleChannelConfig{}
 	oCfg := &exampleOrdererConfig{}
 
 	orderers := []fab.OrdererConfig{}
-	channel, err := chCfg.ChannelConfig(channelName)
-	if err != nil || channel == nil {
-		return nil, errors.Errorf("Unable to retrieve channel config: %s", err)
-	}
+	channel := chCfg.ChannelConfig(channelName)
 
 	for _, chOrderer := range channel.Orderers {
-		orderer, err := oCfg.OrdererConfig(chOrderer)
-		if err != nil || orderer == nil {
-			return nil, errors.Errorf("unable to retrieve orderer config: %s", err)
+		orderer, ok := oCfg.OrdererConfig(chOrderer)
+		if !ok || orderer == nil {
+			return nil
 		}
-
 		orderers = append(orderers, *orderer)
 	}
 
-	return orderers, nil
+	return orderers
 }
 
 type exampleTLSCACertPool struct {
-	tlsCertPool commtls.CertPool
+	tlsCertPool fab.CertPool
 }
 
 //newTLSCACertPool will create a new exampleTLSCACertPool instance with useSystemCertPool bool flag
 func newTLSCACertPool(useSystemCertPool bool) *exampleTLSCACertPool {
 	m := &exampleTLSCACertPool{}
-	m.tlsCertPool = commtls.NewCertPool(useSystemCertPool)
+	var err error
+	m.tlsCertPool, err = commtls.NewCertPool(useSystemCertPool)
+	if err != nil {
+		panic(err)
+	}
 	return m
 }
 
 // TLSCACertPool overrides EndpointConfig's TLSCACertPool function which will add the list of cert args to the cert pool and return it
-func (m *exampleTLSCACertPool) TLSCACertPool(certs ...*x509.Certificate) (*x509.CertPool, error) {
-	return m.tlsCertPool.Get(certs...)
-}
-
-type exampleEventServiceType struct{}
-
-func (m *exampleEventServiceType) EventServiceType() fab.EventServiceType {
-	// if this test is run for the previous release (1.0) then update the config with EVENT_HUB as it doesn't support deliveryService
-	if os.Getenv("FABRIC_SDK_CLIENT_EVENTSERVICE_TYPE") == "eventhub" {
-		return fab.EventHubEventServiceType
-	}
-	return fab.DeliverEventServiceType
-	//or for EventHub service type, but most configs use Delivery Service starting release 1.1
-	//return fab.EventHubEventServiceType
+func (m *exampleTLSCACertPool) TLSCACertPool() fab.CertPool {
+	return m.tlsCertPool
 }
 
 type exampleTLSClientCerts struct {
-	RWLock *sync.RWMutex
+	RWLock sync.RWMutex
 }
 
 // TLSClientCerts overrides EndpointConfig's TLSClientCerts function which will return the list of configured client certs
-func (m *exampleTLSClientCerts) TLSClientCerts() ([]tls.Certificate, error) {
-	if m.RWLock == nil {
-		m.RWLock = &sync.RWMutex{}
-	}
+func (m *exampleTLSClientCerts) TLSClientCerts() []tls.Certificate {
 	var clientCerts tls.Certificate
-	var cb []byte
-	cb, err := clientConfig.TLSCerts.Client.Cert.Bytes()
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to load tls client cert")
-	}
+	cb := client.TLSCerts.Client.Cert.Bytes()
 
 	if len(cb) == 0 {
 		// if no cert found in the config, return empty cert chain
-		return []tls.Certificate{clientCerts}, nil
+		return []tls.Certificate{clientCerts}
 	}
 
 	// Load private key from cert using default crypto suite
@@ -749,57 +727,66 @@ func (m *exampleTLSClientCerts) TLSClientCerts() ([]tls.Certificate, error) {
 	if err != nil || pk == nil {
 		m.RWLock.Lock()
 		defer m.RWLock.Unlock()
-		return m.loadPrivateKeyFromConfig(&clientConfig, clientCerts, cb)
+		ccs, err := m.loadPrivateKeyFromConfig(&client, clientCerts, cb)
+		if err != nil {
+			return nil
+		}
+		return ccs
 	}
 
 	// private key was retrieved from cert
 	clientCerts, err = cryptoutil.X509KeyPair(cb, pk, cs)
 	if err != nil {
-		return nil, err
+		return nil
 	}
 
-	return []tls.Certificate{clientCerts}, nil
+	return []tls.Certificate{clientCerts}
 }
-func (m *exampleTLSClientCerts) loadPrivateKeyFromConfig(clientConfig *msp.ClientConfig, clientCerts tls.Certificate, cb []byte) ([]tls.Certificate, error) {
-	var kb []byte
-	var err error
-	if clientConfig.TLSCerts.Client.Key.Pem != "" {
-		kb = []byte(clientConfig.TLSCerts.Client.Key.Pem)
-	} else if clientConfig.TLSCerts.Client.Key.Path != "" {
-		kb, err = loadByteKeyOrCertFromFile(clientConfig, true)
-		if err != nil {
-			return nil, errors.Wrapf(err, "Failed to load key from file path '%s'", clientConfig.TLSCerts.Client.Key.Path)
-		}
-	}
+func (m *exampleTLSClientCerts) loadPrivateKeyFromConfig(clientConfig *clientConfig, clientCerts tls.Certificate, cb []byte) ([]tls.Certificate, error) {
+
+	kb := clientConfig.TLSCerts.Client.Key.Bytes()
 
 	// load the key/cert pair from []byte
-	clientCerts, err = tls.X509KeyPair(cb, kb)
+	clientCerts, err := tls.X509KeyPair(cb, kb)
 	if err != nil {
-		return nil, errors.Errorf("Error loading cert/key pair as TLS client credentials: %v", err)
+		return nil, errors.Errorf("Error loading cert/key pair as TLS client credentials: %s", err)
 	}
 
 	return []tls.Certificate{clientCerts}, nil
-}
-func loadByteKeyOrCertFromFile(c *msp.ClientConfig, isKey bool) ([]byte, error) {
-	var path string
-	a := "key"
-	if isKey {
-		path = pathvar.Subst(c.TLSCerts.Client.Key.Path)
-		c.TLSCerts.Client.Key.Path = path
-	} else {
-		a = "cert"
-		path = pathvar.Subst(c.TLSCerts.Client.Cert.Path)
-		c.TLSCerts.Client.Cert.Path = path
-	}
-	bts, err := ioutil.ReadFile(path)
-	if err != nil {
-		return nil, errors.Errorf("Error loading %s file from '%s' err: %v", a, path, err)
-	}
-	return bts, nil
 }
 
 type exampleCryptoConfigPath struct{}
 
 func (m *exampleCryptoConfigPath) CryptoConfigPath() string {
-	return pathvar.Subst(clientConfig.CryptoConfig.Path)
+	return client.CryptoConfig.Path
+}
+
+func newTLSConfig(path string) endpoint.TLSConfig {
+	config := endpoint.TLSConfig{Path: pathvar.Subst(path)}
+	if err := config.LoadBytes(); err != nil {
+		panic(fmt.Sprintf("error loading bytes: %s", err))
+	}
+	return config
+}
+
+func tlsCertByBytes(path string) *x509.Certificate {
+
+	bytes, err := ioutil.ReadFile(pathvar.Subst(path))
+	if err != nil {
+		return nil
+	}
+
+	block, _ := pem.Decode(bytes)
+
+	if block != nil {
+		pub, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			panic(err)
+		}
+
+		return pub
+	}
+
+	//no cert found and there is no error
+	return nil
 }

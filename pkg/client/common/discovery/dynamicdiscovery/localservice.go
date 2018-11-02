@@ -8,6 +8,7 @@ package dynamicdiscovery
 
 import (
 	discclient "github.com/hyperledger/fabric-sdk-go/internal/github.com/hyperledger/fabric/discovery/client"
+	coptions "github.com/hyperledger/fabric-sdk-go/pkg/common/options"
 	contextAPI "github.com/hyperledger/fabric-sdk-go/pkg/common/providers/context"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
 	reqContext "github.com/hyperledger/fabric-sdk-go/pkg/context"
@@ -18,20 +19,30 @@ import (
 // Fabric's Discovery service for the peers that are in the local MSP.
 type LocalService struct {
 	*service
+	mspID string
 }
 
 // newLocalService creates a Local Discovery Service to query the list of member peers in the local MSP.
-func newLocalService(options options) *LocalService {
-	logger.Debugf("Creating new dynamic discovery service with cache refresh interval %s", options.refreshInterval)
+func newLocalService(config fab.EndpointConfig, mspID string, opts ...coptions.Opt) *LocalService {
+	logger.Debug("Creating new local discovery service")
 
-	s := &LocalService{}
-	s.service = newService(s.queryPeers, options)
+	s := &LocalService{mspID: mspID}
+	s.service = newService(config, s.queryPeers, opts...)
 	return s
 }
 
 // Initialize initializes the service with local context
 func (s *LocalService) Initialize(ctx contextAPI.Local) error {
-	return s.service.Initialize(ctx)
+	if ctx.Identifier().MSPID != s.mspID {
+		return errors.Errorf("expecting context for MSP [%s] but got [%s]", s.mspID, ctx.Identifier().MSPID)
+	}
+	return s.service.initialize(ctx)
+}
+
+// Close releases resources
+func (s *LocalService) Close() {
+	logger.Debugf("Closing local discovery service for MSP [%s]", s.mspID)
+	s.service.Close()
 }
 
 func (s *LocalService) localContext() contextAPI.Local {
@@ -39,7 +50,7 @@ func (s *LocalService) localContext() contextAPI.Local {
 }
 
 func (s *LocalService) queryPeers() ([]fab.Peer, error) {
-	logger.Debugf("Refreshing local peers from discovery service...")
+	logger.Debug("Refreshing local peers from discovery service...")
 
 	ctx := s.localContext()
 	if ctx == nil {
@@ -57,26 +68,23 @@ func (s *LocalService) queryPeers() ([]fab.Peer, error) {
 	req := discclient.NewRequest().AddLocalPeersQuery()
 	responses, err := s.discoveryClient().Send(reqCtx, req, *target)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error calling discover service send")
+		return nil, errors.Wrap(err, "error calling discover service send")
 	}
 	if len(responses) == 0 {
-		return nil, errors.Wrapf(err, "expecting 1 response from discover service send but got none")
+		return nil, errors.Wrap(err, "expecting 1 response from discover service send but got none")
 	}
 
 	response := responses[0]
 	endpoints, err := response.ForLocal().Peers()
 	if err != nil {
-		return nil, errors.Wrapf(err, "error getting peers from discovery response")
+		return nil, errors.Wrap(err, "error getting peers from discovery response")
 	}
 
 	return s.filterLocalMSP(asPeers(ctx, endpoints)), nil
 }
 
 func (s *LocalService) getTarget(ctx contextAPI.Client) (*fab.PeerConfig, error) {
-	peers, err := ctx.EndpointConfig().NetworkPeers()
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get peer configs")
-	}
+	peers := ctx.EndpointConfig().NetworkPeers()
 	mspID := ctx.Identifier().MSPID
 	for _, p := range peers {
 		// Need to go to a peer with the local MSPID, otherwise the request will be rejected
@@ -94,7 +102,7 @@ func (s *LocalService) filterLocalMSP(peers []fab.Peer) []fab.Peer {
 	var filteredPeers []fab.Peer
 	for _, p := range peers {
 		if p.MSPID() != localMSPID {
-			logger.Warnf("Peer [%s] is not part of the local MSP [%s] but in MSP [%s]", p.URL(), localMSPID, p.MSPID())
+			logger.Debugf("Peer [%s] is not part of the local MSP [%s] but in MSP [%s]", p.URL(), localMSPID, p.MSPID())
 		} else {
 			filteredPeers = append(filteredPeers, p)
 		}

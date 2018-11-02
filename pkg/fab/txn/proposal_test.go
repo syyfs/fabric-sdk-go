@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/golang/mock/gomock"
 	"github.com/golang/protobuf/proto"
 	"github.com/stretchr/testify/assert"
@@ -29,6 +31,29 @@ import (
 const (
 	testChannel = "testchannel"
 )
+
+func TestNewHeader(t *testing.T) {
+	user := mspmocks.NewMockSigningIdentity("test", "1234")
+	ctx := mocks.NewMockContext(user)
+
+	creator, err := ctx.Serialize()
+	require.NoError(t, err)
+
+	txh, err := NewHeader(ctx, testChannel)
+	require.NoError(t, err)
+	require.NotEmptyf(t, txh.nonce, "Expecting nonce")
+	require.Equal(t, creator, txh.creator)
+	require.NotEmpty(t, txh.id)
+
+	creator = []byte("someothercreator")
+	nonce := []byte("123456")
+
+	txh, err = NewHeader(ctx, testChannel, fab.WithCreator(creator), fab.WithNonce(nonce))
+	require.NoError(t, err)
+	require.Equal(t, nonce, txh.nonce)
+	require.Equal(t, creator, txh.creator)
+	require.NotEmpty(t, txh.id)
+}
 
 func TestNewTransactionProposal(t *testing.T) {
 	user := mspmocks.NewMockSigningIdentity("test", "1234")
@@ -129,7 +154,7 @@ func TestNewTransactionProposalParams(t *testing.T) {
 
 	_, err = SendProposal(reqCtx, tp, nil)
 	if err == nil {
-		t.Fatalf("Expected error")
+		t.Fatal("Expected error")
 	}
 
 	request = fab.ChaincodeInvokeRequest{
@@ -138,7 +163,7 @@ func TestNewTransactionProposalParams(t *testing.T) {
 
 	_, err = CreateChaincodeInvokeProposal(txh, request)
 	if err == nil {
-		t.Fatalf("Expected error")
+		t.Fatal("Expected error")
 	}
 
 	request = fab.ChaincodeInvokeRequest{
@@ -147,7 +172,7 @@ func TestNewTransactionProposalParams(t *testing.T) {
 
 	_, err = CreateChaincodeInvokeProposal(txh, request)
 	if err == nil {
-		t.Fatalf("Expected error")
+		t.Fatal("Expected error")
 	}
 
 	request = fab.ChaincodeInvokeRequest{
@@ -211,7 +236,7 @@ func TestSendTransactionProposalToProcessors(t *testing.T) {
 	}, nil)
 
 	if result != nil || err == nil || err.Error() != "targets is required" {
-		t.Fatalf("Test SendTransactionProposal failed, validation on peer is nil is not working as expected: %v", err)
+		t.Fatalf("Test SendTransactionProposal failed, validation on peer is nil is not working as expected: %s", err)
 	}
 
 	result, err = SendProposal(reqCtx, &fab.TransactionProposal{
@@ -219,14 +244,14 @@ func TestSendTransactionProposalToProcessors(t *testing.T) {
 	}, []fab.ProposalProcessor{})
 
 	if result != nil || err == nil || err.Error() != "targets is required" {
-		t.Fatalf("Test SendTransactionProposal failed, validation on missing peer objects is not working: %v", err)
+		t.Fatalf("Test SendTransactionProposal failed, validation on missing peer objects is not working: %s", err)
 	}
 
 	result, err = SendProposal(reqCtx, &fab.TransactionProposal{
 		Proposal: &pb.Proposal{}}, targets)
 
 	if result == nil || err != nil {
-		t.Fatalf("Test SendTransactionProposal failed, with error '%s'", err.Error())
+		t.Fatalf("Test SendTransactionProposal failed, with error '%s'", err)
 	}
 }
 

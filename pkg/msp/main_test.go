@@ -76,12 +76,12 @@ func (f *textFixture) setup(configBackend ...core.ConfigBackend) { //nolint
 
 	f.endpointConfig, err = fabImpl.ConfigFromBackend(configBackend...)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to read config : %v", err))
+		panic(fmt.Sprintf("Failed to read config : %s", err))
 	}
 
 	f.identityConfig, err = ConfigFromBackend(configBackend...)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to read config : %v", err))
+		panic(fmt.Sprintf("Failed to read config : %s", err))
 	}
 
 	// Delete all private keys from the crypto suite store
@@ -91,26 +91,26 @@ func (f *textFixture) setup(configBackend ...core.ConfigBackend) { //nolint
 
 	f.cryptoSuite, err = sw.GetSuiteByConfig(f.cryptSuiteConfig)
 	if f.cryptoSuite == nil {
-		panic(fmt.Sprintf("Failed initialize cryptoSuite: %v", err))
+		panic(fmt.Sprintf("Failed initialize cryptoSuite: %s", err))
 	}
 
 	if f.identityConfig.CredentialStorePath() != "" {
 		f.userStore, err = NewCertFileUserStore(f.identityConfig.CredentialStorePath())
 		if err != nil {
-			panic(fmt.Sprintf("creating a user store failed: %v", err))
+			panic(fmt.Sprintf("creating a user store failed: %s", err))
 		}
 	}
 	f.userStore = userStoreFromConfig(nil, f.identityConfig)
 
 	identityManagers := make(map[string]msp.IdentityManager)
-	netConfig, err := f.endpointConfig.NetworkConfig()
-	if err != nil {
-		panic(fmt.Sprintf("failed to get network config: %v", err))
+	netConfig := f.endpointConfig.NetworkConfig()
+	if netConfig == nil {
+		panic("failed to get network config")
 	}
 	for orgName := range netConfig.Organizations {
 		mgr, err1 := NewIdentityManager(orgName, f.userStore, f.cryptoSuite, f.endpointConfig)
 		if err1 != nil {
-			panic(fmt.Sprintf("failed to initialize identity manager for organization: %s, cause :%v", orgName, err1))
+			panic(fmt.Sprintf("failed to initialize identity manager for organization: %s, cause :%s", orgName, err1))
 		}
 		identityManagers[orgName] = mgr
 	}
@@ -125,12 +125,12 @@ func (f *textFixture) setup(configBackend ...core.ConfigBackend) { //nolint
 	ctx := &context.Client{Providers: ctxProvider}
 
 	if err != nil {
-		panic(fmt.Sprintf("failed to created context for test setup: %v", err))
+		panic(fmt.Sprintf("failed to created context for test setup: %s", err))
 	}
 
 	f.caClient, err = NewCAClient(org1, ctx)
 	if err != nil {
-		panic(fmt.Sprintf("NewCAClient returned error: %v", err))
+		panic(fmt.Sprintf("NewCAClient returned error: %s", err))
 	}
 
 	// Start Http Server if it's not running
@@ -148,7 +148,7 @@ func (f *textFixture) close() {
 func readCert(t *testing.T) []byte {
 	cert, err := ioutil.ReadFile("testdata/root.pem")
 	if err != nil {
-		t.Fatalf("Error reading cert: %s", err.Error())
+		t.Fatalf("Error reading cert: %s", err)
 	}
 	return cert
 }
@@ -156,39 +156,43 @@ func readCert(t *testing.T) []byte {
 func cleanup(storePath string) {
 	err := os.RemoveAll(storePath)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to remove dir %s: %v\n", storePath, err))
+		panic(fmt.Sprintf("Failed to remove dir %s: %s\n", storePath, err))
 	}
 }
 
 func cleanupTestPath(t *testing.T, storePath string) {
 	err := os.RemoveAll(storePath)
 	if err != nil {
-		t.Fatalf("Cleaning up directory '%s' failed: %v", storePath, err)
+		t.Fatalf("Cleaning up directory '%s' failed: %s", storePath, err)
 	}
 }
 
 func mspIDByOrgName(t *testing.T, c fab.EndpointConfig, orgName string) string {
-	netConfig, err := c.NetworkConfig()
-	if err != nil {
-		t.Fatalf("network config retrieval failed: %v", err)
+	netConfig := c.NetworkConfig()
+	if netConfig == nil {
+		t.Fatal("network config retrieval failed")
 	}
 
 	// viper keys are case insensitive
 	orgConfig, ok := netConfig.Organizations[strings.ToLower(orgName)]
 	if !ok {
-		t.Fatalf("org config retrieval failed: %v", err)
+		t.Fatal("org config retrieval failed ")
 	}
 	return orgConfig.MSPID
 }
 
 func userStoreFromConfig(t *testing.T, config msp.IdentityConfig) msp.UserStore {
-	stateStore, err := kvs.New(&kvs.FileKeyValueStoreOptions{Path: config.CredentialStorePath()})
+	csp := config.CredentialStorePath()
+	if csp == "" {
+		return nil
+	}
+	stateStore, err := kvs.New(&kvs.FileKeyValueStoreOptions{Path: csp})
 	if err != nil {
-		t.Fatalf("CreateNewFileKeyValueStore failed: %v", err)
+		t.Fatalf("CreateNewFileKeyValueStore failed: %s", err)
 	}
 	userStore, err := NewCertFileUserStore1(stateStore)
 	if err != nil {
-		t.Fatalf("CreateNewFileKeyValueStore failed: %v", err)
+		t.Fatalf("CreateNewFileKeyValueStore failed: %s", err)
 	}
 	return userStore
 }
@@ -209,7 +213,7 @@ func (p *identityManagerProvider) IdentityManager(orgName string) (msp.IdentityM
 func updateCAServerURL(caServerURL string, existingBackends []core.ConfigBackend) []core.ConfigBackend {
 
 	//get existing certificateAuthorities
-	networkConfig := fab.NetworkConfig{}
+	networkConfig := identityConfigEntity{}
 	lookup.New(existingBackends...).UnmarshalKey("certificateAuthorities", &networkConfig.CertificateAuthorities)
 
 	//update URLs

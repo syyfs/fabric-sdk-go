@@ -7,7 +7,6 @@ package mockfab
 import (
 	context "context"
 	tls "crypto/tls"
-	x509 "crypto/x509"
 	reflect "reflect"
 	time "time"
 
@@ -39,11 +38,10 @@ func (m *MockEndpointConfig) EXPECT() *MockEndpointConfigMockRecorder {
 }
 
 // ChannelConfig mocks base method
-func (m *MockEndpointConfig) ChannelConfig(arg0 string) (*fab.ChannelNetworkConfig, error) {
+func (m *MockEndpointConfig) ChannelConfig(arg0 string) *fab.ChannelEndpointConfig {
 	ret := m.ctrl.Call(m, "ChannelConfig", arg0)
-	ret0, _ := ret[0].(*fab.ChannelNetworkConfig)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret0, _ := ret[0].(*fab.ChannelEndpointConfig)
+	return ret0
 }
 
 // ChannelConfig indicates an expected call of ChannelConfig
@@ -52,11 +50,10 @@ func (mr *MockEndpointConfigMockRecorder) ChannelConfig(arg0 interface{}) *gomoc
 }
 
 // ChannelOrderers mocks base method
-func (m *MockEndpointConfig) ChannelOrderers(arg0 string) ([]fab.OrdererConfig, error) {
+func (m *MockEndpointConfig) ChannelOrderers(arg0 string) []fab.OrdererConfig {
 	ret := m.ctrl.Call(m, "ChannelOrderers", arg0)
 	ret0, _ := ret[0].([]fab.OrdererConfig)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	return ret0
 }
 
 // ChannelOrderers indicates an expected call of ChannelOrderers
@@ -65,11 +62,10 @@ func (mr *MockEndpointConfigMockRecorder) ChannelOrderers(arg0 interface{}) *gom
 }
 
 // ChannelPeers mocks base method
-func (m *MockEndpointConfig) ChannelPeers(arg0 string) ([]fab.ChannelPeer, error) {
+func (m *MockEndpointConfig) ChannelPeers(arg0 string) []fab.ChannelPeer {
 	ret := m.ctrl.Call(m, "ChannelPeers", arg0)
 	ret0, _ := ret[0].([]fab.ChannelPeer)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	return ret0
 }
 
 // ChannelPeers indicates an expected call of ChannelPeers
@@ -89,37 +85,11 @@ func (mr *MockEndpointConfigMockRecorder) CryptoConfigPath() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CryptoConfigPath", reflect.TypeOf((*MockEndpointConfig)(nil).CryptoConfigPath))
 }
 
-// EventServiceType mocks base method
-func (m *MockEndpointConfig) EventServiceType() fab.EventServiceType {
-	ret := m.ctrl.Call(m, "EventServiceType")
-	ret0, _ := ret[0].(fab.EventServiceType)
-	return ret0
-}
-
-// EventServiceType indicates an expected call of EventServiceType
-func (mr *MockEndpointConfigMockRecorder) EventServiceType() *gomock.Call {
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EventServiceType", reflect.TypeOf((*MockEndpointConfig)(nil).EventServiceType))
-}
-
-// MSPID mocks base method
-func (m *MockEndpointConfig) MSPID(arg0 string) (string, error) {
-	ret := m.ctrl.Call(m, "MSPID", arg0)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// MSPID indicates an expected call of MSPID
-func (mr *MockEndpointConfigMockRecorder) MSPID(arg0 interface{}) *gomock.Call {
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MSPID", reflect.TypeOf((*MockEndpointConfig)(nil).MSPID), arg0)
-}
-
 // NetworkConfig mocks base method
-func (m *MockEndpointConfig) NetworkConfig() (*fab.NetworkConfig, error) {
+func (m *MockEndpointConfig) NetworkConfig() *fab.NetworkConfig {
 	ret := m.ctrl.Call(m, "NetworkConfig")
 	ret0, _ := ret[0].(*fab.NetworkConfig)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	return ret0
 }
 
 // NetworkConfig indicates an expected call of NetworkConfig
@@ -128,11 +98,10 @@ func (mr *MockEndpointConfigMockRecorder) NetworkConfig() *gomock.Call {
 }
 
 // NetworkPeers mocks base method
-func (m *MockEndpointConfig) NetworkPeers() ([]fab.NetworkPeer, error) {
+func (m *MockEndpointConfig) NetworkPeers() []fab.NetworkPeer {
 	ret := m.ctrl.Call(m, "NetworkPeers")
 	ret0, _ := ret[0].([]fab.NetworkPeer)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	return ret0
 }
 
 // NetworkPeers indicates an expected call of NetworkPeers
@@ -141,10 +110,10 @@ func (mr *MockEndpointConfigMockRecorder) NetworkPeers() *gomock.Call {
 }
 
 // OrdererConfig mocks base method
-func (m *MockEndpointConfig) OrdererConfig(arg0 string) (*fab.OrdererConfig, error) {
+func (m *MockEndpointConfig) OrdererConfig(arg0 string) (*fab.OrdererConfig, bool) {
 	ret := m.ctrl.Call(m, "OrdererConfig", arg0)
 	ret0, _ := ret[0].(*fab.OrdererConfig)
-	ret1, _ := ret[1].(error)
+	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
 
@@ -154,11 +123,10 @@ func (mr *MockEndpointConfigMockRecorder) OrdererConfig(arg0 interface{}) *gomoc
 }
 
 // OrderersConfig mocks base method
-func (m *MockEndpointConfig) OrderersConfig() ([]fab.OrdererConfig, error) {
+func (m *MockEndpointConfig) OrderersConfig() []fab.OrdererConfig {
 	ret := m.ctrl.Call(m, "OrderersConfig")
 	ret0, _ := ret[0].([]fab.OrdererConfig)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	return ret0
 }
 
 // OrderersConfig indicates an expected call of OrderersConfig
@@ -167,10 +135,10 @@ func (mr *MockEndpointConfigMockRecorder) OrderersConfig() *gomock.Call {
 }
 
 // PeerConfig mocks base method
-func (m *MockEndpointConfig) PeerConfig(arg0 string) (*fab.PeerConfig, error) {
+func (m *MockEndpointConfig) PeerConfig(arg0 string) (*fab.PeerConfig, bool) {
 	ret := m.ctrl.Call(m, "PeerConfig", arg0)
 	ret0, _ := ret[0].(*fab.PeerConfig)
-	ret1, _ := ret[1].(error)
+	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
 
@@ -179,24 +147,11 @@ func (mr *MockEndpointConfigMockRecorder) PeerConfig(arg0 interface{}) *gomock.C
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PeerConfig", reflect.TypeOf((*MockEndpointConfig)(nil).PeerConfig), arg0)
 }
 
-// PeerMSPID mocks base method
-func (m *MockEndpointConfig) PeerMSPID(arg0 string) (string, error) {
-	ret := m.ctrl.Call(m, "PeerMSPID", arg0)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// PeerMSPID indicates an expected call of PeerMSPID
-func (mr *MockEndpointConfigMockRecorder) PeerMSPID(arg0 interface{}) *gomock.Call {
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PeerMSPID", reflect.TypeOf((*MockEndpointConfig)(nil).PeerMSPID), arg0)
-}
-
 // PeersConfig mocks base method
-func (m *MockEndpointConfig) PeersConfig(arg0 string) ([]fab.PeerConfig, error) {
+func (m *MockEndpointConfig) PeersConfig(arg0 string) ([]fab.PeerConfig, bool) {
 	ret := m.ctrl.Call(m, "PeersConfig", arg0)
 	ret0, _ := ret[0].([]fab.PeerConfig)
-	ret1, _ := ret[1].(error)
+	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
 
@@ -206,28 +161,22 @@ func (mr *MockEndpointConfigMockRecorder) PeersConfig(arg0 interface{}) *gomock.
 }
 
 // TLSCACertPool mocks base method
-func (m *MockEndpointConfig) TLSCACertPool(arg0 ...*x509.Certificate) (*x509.CertPool, error) {
-	varargs := []interface{}{}
-	for _, a := range arg0 {
-		varargs = append(varargs, a)
-	}
-	ret := m.ctrl.Call(m, "TLSCACertPool", varargs...)
-	ret0, _ := ret[0].(*x509.CertPool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+func (m *MockEndpointConfig) TLSCACertPool() fab.CertPool {
+	ret := m.ctrl.Call(m, "TLSCACertPool")
+	ret0, _ := ret[0].(fab.CertPool)
+	return ret0
 }
 
 // TLSCACertPool indicates an expected call of TLSCACertPool
-func (mr *MockEndpointConfigMockRecorder) TLSCACertPool(arg0 ...interface{}) *gomock.Call {
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TLSCACertPool", reflect.TypeOf((*MockEndpointConfig)(nil).TLSCACertPool), arg0...)
+func (mr *MockEndpointConfigMockRecorder) TLSCACertPool() *gomock.Call {
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TLSCACertPool", reflect.TypeOf((*MockEndpointConfig)(nil).TLSCACertPool))
 }
 
 // TLSClientCerts mocks base method
-func (m *MockEndpointConfig) TLSClientCerts() ([]tls.Certificate, error) {
+func (m *MockEndpointConfig) TLSClientCerts() []tls.Certificate {
 	ret := m.ctrl.Call(m, "TLSClientCerts")
 	ret0, _ := ret[0].([]tls.Certificate)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	return ret0
 }
 
 // TLSClientCerts indicates an expected call of TLSClientCerts
@@ -318,18 +267,6 @@ func (mr *MockProvidersMockRecorder) ChannelProvider() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ChannelProvider", reflect.TypeOf((*MockProviders)(nil).ChannelProvider))
 }
 
-// DiscoveryProvider mocks base method
-func (m *MockProviders) DiscoveryProvider() fab.DiscoveryProvider {
-	ret := m.ctrl.Call(m, "DiscoveryProvider")
-	ret0, _ := ret[0].(fab.DiscoveryProvider)
-	return ret0
-}
-
-// DiscoveryProvider indicates an expected call of DiscoveryProvider
-func (mr *MockProvidersMockRecorder) DiscoveryProvider() *gomock.Call {
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DiscoveryProvider", reflect.TypeOf((*MockProviders)(nil).DiscoveryProvider))
-}
-
 // EndpointConfig mocks base method
 func (m *MockProviders) EndpointConfig() fab.EndpointConfig {
 	ret := m.ctrl.Call(m, "EndpointConfig")
@@ -364,16 +301,4 @@ func (m *MockProviders) LocalDiscoveryProvider() fab.LocalDiscoveryProvider {
 // LocalDiscoveryProvider indicates an expected call of LocalDiscoveryProvider
 func (mr *MockProvidersMockRecorder) LocalDiscoveryProvider() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LocalDiscoveryProvider", reflect.TypeOf((*MockProviders)(nil).LocalDiscoveryProvider))
-}
-
-// SelectionProvider mocks base method
-func (m *MockProviders) SelectionProvider() fab.SelectionProvider {
-	ret := m.ctrl.Call(m, "SelectionProvider")
-	ret0, _ := ret[0].(fab.SelectionProvider)
-	return ret0
-}
-
-// SelectionProvider indicates an expected call of SelectionProvider
-func (mr *MockProvidersMockRecorder) SelectionProvider() *gomock.Call {
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SelectionProvider", reflect.TypeOf((*MockProviders)(nil).SelectionProvider))
 }

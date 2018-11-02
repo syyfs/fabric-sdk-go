@@ -23,7 +23,6 @@ import (
 	"github.com/hyperledger/fabric-sdk-go/pkg/core/cryptosuite"
 	fabImpl "github.com/hyperledger/fabric-sdk-go/pkg/fab"
 	sdkApi "github.com/hyperledger/fabric-sdk-go/pkg/fabsdk/api"
-	"github.com/hyperledger/fabric-sdk-go/pkg/fabsdk/provider/chpvdr"
 	mspImpl "github.com/hyperledger/fabric-sdk-go/pkg/msp"
 	"github.com/pkg/errors"
 )
@@ -32,8 +31,9 @@ var logger = logging.NewLogger("fabsdk")
 
 // FabricSDK provides access (and context) to clients being managed by the SDK.
 type FabricSDK struct {
-	opts     options
-	provider *context.Provider
+	opts        options
+	provider    *context.Provider
+	cryptoSuite core.CryptoSuite
 }
 
 type configs struct {
@@ -107,22 +107,26 @@ func fromPkgSuite(configProvider core.ConfigProvider, pkgSuite pkgSuite, opts ..
 	return &sdk, err
 }
 
-// WithConfigCryptoSuite injects a CryptoSuiteConfig interface to the SDK
-func WithConfigCryptoSuite(cryptoConfig core.CryptoSuiteConfig) Option {
+// WithCryptoSuiteConfig injects a CryptoSuiteConfig interface to the SDK
+// it accepts either a full interface of CryptoSuiteConfig or a list
+// of sub interfaces each implementing one (or more) function(s) of CryptoSuiteConfig
+func WithCryptoSuiteConfig(cryptoConfigs ...interface{}) Option {
 	return func(opts *options) error {
-		opts.CryptoSuiteConfig = cryptoConfig
+		c, err := cryptosuite.BuildCryptoSuiteConfigFromOptions(cryptoConfigs...)
+		if err != nil {
+			return err
+		}
+		opts.CryptoSuiteConfig = c
 		return nil
 	}
 }
 
-// WithConfigEndpoint injects a EndpointConfig interface to the SDK
-// it accepts either a full interface of EndpointEconfig or a list
+// WithEndpointConfig injects a EndpointConfig interface to the SDK
+// it accepts either a full interface of EndpointConfig or a list
 // of sub interfaces each implementing one (or more) function(s) of EndpointConfig
-func WithConfigEndpoint(endpointConfigs ...interface{}) Option {
+func WithEndpointConfig(endpointConfigs ...interface{}) Option {
 	return func(opts *options) error {
 		c, err := fabImpl.BuildConfigEndpointFromOptions(endpointConfigs...)
-		// since EndpointConfig is the seed to the sdk's initialization
-		// if building an instance from options fails, then return an error immediately
 		if err != nil {
 			return err
 		}
@@ -131,10 +135,16 @@ func WithConfigEndpoint(endpointConfigs ...interface{}) Option {
 	}
 }
 
-// WithConfigIdentity injects a IdentityConfig interface to the SDK
-func WithConfigIdentity(identityConfig msp.IdentityConfig) Option {
+// WithIdentityConfig injects a IdentityConfig interface to the SDK
+// it accepts either a full interface of IdentityConfig or a list
+// of sub interfaces each implementing one (or more) function(s) of IdentityConfig
+func WithIdentityConfig(identityConfigs ...interface{}) Option {
 	return func(opts *options) error {
-		opts.IdentityConfig = identityConfig
+		c, err := mspImpl.BuildIdentityConfigFromOptions(identityConfigs...)
+		if err != nil {
+			return err
+		}
+		opts.IdentityConfig = c
 		return nil
 	}
 }
@@ -197,24 +207,8 @@ func initSDK(sdk *FabricSDK, configProvider core.ConfigProvider, opts []Option) 
 		return errors.WithMessage(err, "failed to initialize configuration")
 	}
 
-	// Initialize crypto provider
-	cryptoSuite, err := sdk.opts.Core.CreateCryptoSuiteProvider(cfg.cryptoSuiteConfig)
-	if err != nil {
-		return errors.WithMessage(err, "failed to initialize crypto suite")
-	}
-
 	// Initialize rand (TODO: should probably be optional)
 	rand.Seed(time.Now().UnixNano())
-
-	// Setting this cryptosuite as the factory default
-	if !cryptosuite.DefaultInitialized() {
-		err = cryptosuite.SetDefault(cryptoSuite)
-		if err != nil {
-			return errors.WithMessage(err, "failed to set default crypto suite")
-		}
-	} else {
-		logger.Debug("default cryptosuite already initialized")
-	}
 
 	// Initialize state store
 	userStore, err := sdk.opts.MSP.CreateUserStore(cfg.identityConfig)
@@ -223,13 +217,13 @@ func initSDK(sdk *FabricSDK, configProvider core.ConfigProvider, opts []Option) 
 	}
 
 	// Initialize Signing Manager
-	signingManager, err := sdk.opts.Core.CreateSigningManager(cryptoSuite)
+	signingManager, err := sdk.opts.Core.CreateSigningManager(sdk.cryptoSuite)
 	if err != nil {
 		return errors.WithMessage(err, "failed to create signing manager")
 	}
 
 	// Initialize IdentityManagerProvider
-	identityManagerProvider, err := sdk.opts.MSP.CreateIdentityManagerProvider(cfg.endpointConfig, cryptoSuite, userStore)
+	identityManagerProvider, err := sdk.opts.MSP.CreateIdentityManagerProvider(cfg.endpointConfig, sdk.cryptoSuite, userStore)
 	if err != nil {
 		return errors.WithMessage(err, "failed to create identity manager provider")
 	}
@@ -240,25 +234,13 @@ func initSDK(sdk *FabricSDK, configProvider core.ConfigProvider, opts []Option) 
 		return errors.WithMessage(err, "failed to create infra provider")
 	}
 
-	// Initialize discovery provider
-	discoveryProvider, err := sdk.opts.Service.CreateDiscoveryProvider(cfg.endpointConfig)
-	if err != nil {
-		return errors.WithMessage(err, "failed to create discovery provider")
-	}
-
 	// Initialize local discovery provider
 	localDiscoveryProvider, err := sdk.opts.Service.CreateLocalDiscoveryProvider(cfg.endpointConfig)
 	if err != nil {
 		return errors.WithMessage(err, "failed to create local discovery provider")
 	}
 
-	// Initialize selection provider (for selecting endorsing peers)
-	selectionProvider, err := sdk.opts.Service.CreateSelectionProvider(cfg.endpointConfig)
-	if err != nil {
-		return errors.WithMessage(err, "failed to create selection provider")
-	}
-
-	channelProvider, err := chpvdr.New(infraProvider)
+	channelProvider, err := sdk.opts.Service.CreateChannelProvider(cfg.endpointConfig)
 	if err != nil {
 		return errors.WithMessage(err, "failed to create channel provider")
 	}
@@ -267,12 +249,10 @@ func initSDK(sdk *FabricSDK, configProvider core.ConfigProvider, opts []Option) 
 	sdk.provider = context.NewProvider(context.WithCryptoSuiteConfig(cfg.cryptoSuiteConfig),
 		context.WithEndpointConfig(cfg.endpointConfig),
 		context.WithIdentityConfig(cfg.identityConfig),
-		context.WithCryptoSuite(cryptoSuite),
+		context.WithCryptoSuite(sdk.cryptoSuite),
 		context.WithSigningManager(signingManager),
 		context.WithUserStore(userStore),
-		context.WithDiscoveryProvider(discoveryProvider),
 		context.WithLocalDiscoveryProvider(localDiscoveryProvider),
-		context.WithSelectionProvider(selectionProvider),
 		context.WithIdentityManagerProvider(identityManagerProvider),
 		context.WithInfraProvider(infraProvider),
 		context.WithChannelProvider(channelProvider))
@@ -285,13 +265,6 @@ func initSDK(sdk *FabricSDK, configProvider core.ConfigProvider, opts []Option) 
 		}
 	}
 
-	if pi, ok := discoveryProvider.(providerInit); ok {
-		err = pi.Initialize(sdk.provider)
-		if err != nil {
-			return errors.WithMessage(err, "failed to initialize discovery provider")
-		}
-	}
-
 	if pi, ok := localDiscoveryProvider.(providerInit); ok {
 		err = pi.Initialize(sdk.provider)
 		if err != nil {
@@ -299,25 +272,24 @@ func initSDK(sdk *FabricSDK, configProvider core.ConfigProvider, opts []Option) 
 		}
 	}
 
-	if pi, ok := selectionProvider.(providerInit); ok {
+	if pi, ok := channelProvider.(providerInit); ok {
 		err = pi.Initialize(sdk.provider)
 		if err != nil {
-			return errors.WithMessage(err, "failed to initialize selection provider")
+			return errors.WithMessage(err, "failed to initialize channel provider")
 		}
 	}
 
+	logger.Debug("SDK initialized successfully")
 	return nil
 }
 
 // Close frees up caches and connections being maintained by the SDK
 func (sdk *FabricSDK) Close() {
-	if pvdr, ok := sdk.provider.DiscoveryProvider().(closeable); ok {
-		pvdr.Close()
-	}
+	logger.Debug("SDK closing")
 	if pvdr, ok := sdk.provider.LocalDiscoveryProvider().(closeable); ok {
 		pvdr.Close()
 	}
-	if pvdr, ok := sdk.provider.SelectionProvider().(closeable); ok {
+	if pvdr, ok := sdk.provider.ChannelProvider().(closeable); ok {
 		pvdr.Close()
 	}
 	sdk.provider.InfraProvider().Close()
@@ -359,6 +331,26 @@ func (sdk *FabricSDK) ChannelContext(channelID string, options ...ContextOption)
 	return channelProvider
 }
 
+// initializeCryptoSuite Initializes crypto provider
+func (sdk *FabricSDK) initializeCryptoSuite(cryptoSuiteConfig core.CryptoSuiteConfig) error {
+	var err error
+	sdk.cryptoSuite, err = sdk.opts.Core.CreateCryptoSuiteProvider(cryptoSuiteConfig)
+	if err != nil {
+		return errors.WithMessage(err, "failed to initialize crypto suite")
+	}
+
+	// Setting this cryptosuite as the factory default
+	if !cryptosuite.DefaultInitialized() {
+		err = cryptosuite.SetDefault(sdk.cryptoSuite)
+		if err != nil {
+			return errors.WithMessage(err, "failed to set default crypto suite")
+		}
+	} else {
+		logger.Debug("default cryptosuite already initialized")
+	}
+	return nil
+}
+
 //loadConfigs load config from config backend when configs are not provided through opts
 func (sdk *FabricSDK) loadConfigs(configProvider core.ConfigProvider) (*configs, error) {
 	c := &configs{
@@ -367,31 +359,42 @@ func (sdk *FabricSDK) loadConfigs(configProvider core.ConfigProvider) (*configs,
 		cryptoSuiteConfig: sdk.opts.CryptoSuiteConfig,
 	}
 
-	if c.cryptoSuiteConfig == nil || c.endpointConfig == nil || c.identityConfig == nil {
-		configBackend, err := configProvider()
+	var configBackend []core.ConfigBackend
+	var err error
+
+	if configProvider != nil {
+		configBackend, err = configProvider()
 		if err != nil {
 			return nil, errors.WithMessage(err, "unable to load config backend")
 		}
-
-		//configs passed through opts take priority over default ones
-		if c.cryptoSuiteConfig == nil {
-			c.cryptoSuiteConfig = cryptosuite.ConfigFromBackend(configBackend...)
-		}
-
-		c.endpointConfig, err = sdk.loadEndpointConfig(configBackend...)
-		if err != nil {
-			return nil, errors.WithMessage(err, "unable to load endpoint config")
-		}
-
-		if c.identityConfig == nil {
-			c.identityConfig, err = mspImpl.ConfigFromBackend(configBackend...)
-			if err != nil {
-				return nil, errors.WithMessage(err, "failed to initialize identity config from config backend")
-			}
-		}
-
-		sdk.opts.ConfigBackend = configBackend
 	}
+
+	//configs passed through opts take priority over default ones
+	// load crypto suite config
+	c.cryptoSuiteConfig, err = sdk.loadCryptoConfig(configBackend...)
+	if err != nil {
+		return nil, errors.WithMessage(err, "unable to load crypto suite config")
+	}
+
+	//Initialize cryptosuite once crypto Suite config is available
+	err = sdk.initializeCryptoSuite(c.cryptoSuiteConfig)
+	if err != nil {
+		return nil, errors.WithMessage(err, "unable to initialize cryptosuite using crypto suite config")
+	}
+
+	// load endpoint config
+	c.endpointConfig, err = sdk.loadEndpointConfig(configBackend...)
+	if err != nil {
+		return nil, errors.WithMessage(err, "unable to load endpoint config")
+	}
+
+	// load identity config
+	c.identityConfig, err = sdk.loadIdentityConfig(configBackend...)
+	if err != nil {
+		return nil, errors.WithMessage(err, "unalbe to load identity config")
+	}
+
+	sdk.opts.ConfigBackend = configBackend
 
 	return c, nil
 }
@@ -420,4 +423,47 @@ func (sdk *FabricSDK) loadEndpointConfig(configBackend ...core.ConfigBackend) (f
 		return nil, errors.New("failed to retrieve config endpoint from opts")
 	}
 	return endpointConfigOpt, nil
+}
+
+func (sdk *FabricSDK) loadCryptoConfig(configBackend ...core.ConfigBackend) (core.CryptoSuiteConfig, error) {
+	cryptoConfigOpt, ok := sdk.opts.CryptoSuiteConfig.(*cryptosuite.CryptoConfigOptions)
+
+	if sdk.opts.CryptoSuiteConfig == nil || (ok && !cryptosuite.IsCryptoConfigFullyOverridden(cryptoConfigOpt)) {
+		defCryptoConfig := cryptosuite.ConfigFromBackend(configBackend...)
+
+		if sdk.opts.CryptoSuiteConfig == nil {
+			return defCryptoConfig, nil
+		}
+
+		return cryptosuite.UpdateMissingOptsWithDefaultConfig(cryptoConfigOpt, defCryptoConfig), nil
+	}
+
+	if !ok {
+		return nil, errors.New("failed to retrieve crypto suite configs from opts")
+	}
+
+	return cryptoConfigOpt, nil
+}
+
+func (sdk *FabricSDK) loadIdentityConfig(configBackend ...core.ConfigBackend) (msp.IdentityConfig, error) {
+	identityConfigOpt, ok := sdk.opts.IdentityConfig.(*mspImpl.IdentityConfigOptions)
+
+	if sdk.opts.IdentityConfig == nil || (ok && !mspImpl.IsIdentityConfigFullyOverridden(identityConfigOpt)) {
+		defIdentityConfig, err := mspImpl.ConfigFromBackend(configBackend...)
+		if err != nil {
+			return nil, errors.WithMessage(err, "failed to initialize identity config from config backend")
+		}
+
+		if sdk.opts.IdentityConfig == nil {
+			return defIdentityConfig, nil
+		}
+
+		return mspImpl.UpdateMissingOptsWithDefaultConfig(identityConfigOpt, defIdentityConfig), nil
+	}
+
+	if !ok {
+		return nil, errors.New("failed to retrieve identity configs from opts")
+	}
+
+	return identityConfigOpt, nil
 }

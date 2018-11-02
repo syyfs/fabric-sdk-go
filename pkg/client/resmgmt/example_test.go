@@ -14,7 +14,7 @@ import (
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
 	sdkCtx "github.com/hyperledger/fabric-sdk-go/pkg/context"
 	"github.com/hyperledger/fabric-sdk-go/pkg/fab/mocks"
-	"github.com/hyperledger/fabric-sdk-go/pkg/fab/resource/api"
+	"github.com/hyperledger/fabric-sdk-go/pkg/fab/resource"
 	mspmocks "github.com/hyperledger/fabric-sdk-go/pkg/msp/test/mockmsp"
 	"github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/common/cauthdsl"
 	"github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/common"
@@ -31,14 +31,14 @@ func Example() {
 	// Read channel configuration
 	r, err := os.Open(channelConfig)
 	if err != nil {
-		fmt.Printf("failed to open channel config: %v", err)
+		fmt.Printf("failed to open channel config: %s\n", err)
 	}
 	defer r.Close()
 
 	// Create new channel 'mychannel'
 	_, err = c.SaveChannel(SaveChannelRequest{ChannelID: "mychannel", ChannelConfig: r})
 	if err != nil {
-		fmt.Printf("failed to save channel: %v", err)
+		fmt.Printf("failed to save channel: %s\n", err)
 	}
 
 	peer := mockPeer()
@@ -46,14 +46,14 @@ func Example() {
 	// Peer joins channel 'mychannel'
 	err = c.JoinChannel("mychannel", WithTargets(peer))
 	if err != nil {
-		fmt.Printf("failed to join channel: %v", err)
+		fmt.Printf("failed to join channel: %s\n", err)
 	}
 
 	// Install example chaincode to peer
-	installReq := InstallCCRequest{Name: "ExampleCC", Version: "v0", Path: "path", Package: &api.CCPackage{Type: 1, Code: []byte("bytes")}}
+	installReq := InstallCCRequest{Name: "ExampleCC", Version: "v0", Path: "path", Package: &resource.CCPackage{Type: 1, Code: []byte("bytes")}}
 	_, err = c.InstallCC(installReq, WithTargets(peer))
 	if err != nil {
-		fmt.Printf("failed to install chaincode: %v", err)
+		fmt.Printf("failed to install chaincode: %s\n", err)
 	}
 
 	// Instantiate example chaincode on channel 'mychannel'
@@ -61,7 +61,7 @@ func Example() {
 	instantiateReq := InstantiateCCRequest{Name: "ExampleCC", Version: "v0", Path: "path", Policy: ccPolicy}
 	_, err = c.InstantiateCC("mychannel", instantiateReq, WithTargets(peer))
 	if err != nil {
-		fmt.Printf("failed to install chaincode: %v", err)
+		fmt.Printf("failed to install chaincode: %s\n", err)
 	}
 
 	fmt.Println("Network setup completed")
@@ -130,7 +130,7 @@ func ExampleWithParentContext() {
 
 	channels, err := c.QueryChannels(WithParentContext(parentContext), WithTargets(mockPeer()))
 	if err != nil {
-		fmt.Printf("failed to query for blockchain info: %v", err)
+		fmt.Printf("failed to query for blockchain info: %s\n", err)
 	}
 
 	if channels != nil {
@@ -149,7 +149,7 @@ func ExampleWithTargets() {
 
 	response, err := c.QueryChannels(WithTargets(mockPeer()))
 	if err != nil {
-		fmt.Printf("failed to query channels: %v", err)
+		fmt.Printf("failed to query channels: %s\n", err)
 	}
 
 	if response != nil {
@@ -171,7 +171,7 @@ func ExampleWithTargetFilter() {
 
 	resp, err := c.InstantiateCC("mychannel", req, WithTargetFilter(&urlTargetFilter{url: "http://peer1.com"}))
 	if err != nil {
-		fmt.Printf("failed to install chaincode: %v", err)
+		fmt.Printf("failed to install chaincode: %s\n", err)
 	}
 
 	if resp.TransactionID == "" {
@@ -188,18 +188,18 @@ func ExampleClient_SaveChannel() {
 
 	c, err := New(mockClientProvider())
 	if err != nil {
-		fmt.Printf("failed to create client: %v", err)
+		fmt.Printf("failed to create client: %s\n", err)
 	}
 
 	r, err := os.Open(channelConfig)
 	if err != nil {
-		fmt.Printf("failed to open channel config: %v", err)
+		fmt.Printf("failed to open channel config: %s\n", err)
 	}
 	defer r.Close()
 
 	resp, err := c.SaveChannel(SaveChannelRequest{ChannelID: "mychannel", ChannelConfig: r})
 	if err != nil {
-		fmt.Printf("failed to save channel: %v", err)
+		fmt.Printf("failed to save channel: %s\n", err)
 	}
 
 	if resp.TransactionID == "" {
@@ -211,22 +211,22 @@ func ExampleClient_SaveChannel() {
 	// Output: Saved channel
 }
 
-func ExampleClient_SaveChannel_withOrdererURL() {
+func ExampleClient_SaveChannel_withOrdererEndpoint() {
 
 	c, err := New(mockClientProvider())
 	if err != nil {
-		fmt.Printf("failed to create client: %v", err)
+		fmt.Printf("failed to create client: %s\n", err)
 	}
 
 	r, err := os.Open(channelConfig)
 	if err != nil {
-		fmt.Printf("failed to open channel config: %v", err)
+		fmt.Printf("failed to open channel config: %s\n", err)
 	}
 	defer r.Close()
 
-	resp, err := c.SaveChannel(SaveChannelRequest{ChannelID: "mychannel", ChannelConfig: r}, WithOrdererURL("example.com"))
+	resp, err := c.SaveChannel(SaveChannelRequest{ChannelID: "mychannel", ChannelConfig: r}, WithOrdererEndpoint("example.com"))
 	if err != nil {
-		fmt.Printf("failed to save channel: %v", err)
+		fmt.Printf("failed to save channel: %s\n", err)
 	}
 
 	if resp.TransactionID == "" {
@@ -248,7 +248,7 @@ func ExampleClient_JoinChannel() {
 
 	err = c.JoinChannel("mychannel", WithTargets(mockPeer()))
 	if err != nil {
-		fmt.Printf("failed to join channel: %v", err)
+		fmt.Printf("failed to join channel: %s\n", err)
 	}
 
 	fmt.Println("Joined channel")
@@ -263,10 +263,10 @@ func ExampleClient_InstallCC() {
 		fmt.Println("failed to create client")
 	}
 
-	req := InstallCCRequest{Name: "ExampleCC", Version: "v0", Path: "path", Package: &api.CCPackage{Type: 1, Code: []byte("bytes")}}
+	req := InstallCCRequest{Name: "ExampleCC", Version: "v0", Path: "path", Package: &resource.CCPackage{Type: 1, Code: []byte("bytes")}}
 	responses, err := c.InstallCC(req, WithTargets(mockPeer()))
 	if err != nil {
-		fmt.Printf("failed to install chaincode: %v", err)
+		fmt.Printf("failed to install chaincode: %s\n", err)
 	}
 
 	if len(responses) > 0 {
@@ -288,7 +288,7 @@ func ExampleClient_InstantiateCC() {
 
 	resp, err := c.InstantiateCC("mychannel", req)
 	if err != nil {
-		fmt.Printf("failed to install chaincode: %v", err)
+		fmt.Printf("failed to install chaincode: %s\n", err)
 	}
 
 	if resp.TransactionID == "" {
@@ -312,7 +312,7 @@ func ExampleClient_UpgradeCC() {
 
 	resp, err := c.UpgradeCC("mychannel", req, WithTargets(mockPeer()))
 	if err != nil {
-		fmt.Printf("failed to upgrade chaincode: %v", err)
+		fmt.Printf("failed to upgrade chaincode: %s\n", err)
 	}
 
 	if resp.TransactionID == "" {
@@ -333,7 +333,7 @@ func ExampleClient_QueryChannels() {
 
 	response, err := c.QueryChannels(WithTargets(mockPeer()))
 	if err != nil {
-		fmt.Printf("failed to query channels: %v", err)
+		fmt.Printf("failed to query channels: %s\n", err)
 	}
 
 	if response != nil {
@@ -352,7 +352,7 @@ func ExampleClient_QueryInstalledChaincodes() {
 
 	response, err := c.QueryInstalledChaincodes(WithTargets(mockPeer()))
 	if err != nil {
-		fmt.Printf("failed to query installed chaincodes: %v", err)
+		fmt.Printf("failed to query installed chaincodes: %s\n", err)
 	}
 
 	if response != nil {
@@ -371,7 +371,7 @@ func ExampleClient_QueryInstantiatedChaincodes() {
 
 	response, err := c.QueryInstantiatedChaincodes("mychannel", WithTargets(mockPeer()))
 	if err != nil {
-		fmt.Printf("failed to query instantiated chaincodes: %v", err)
+		fmt.Printf("failed to query instantiated chaincodes: %s\n", err)
 	}
 
 	if response != nil {
@@ -387,10 +387,9 @@ func mockClientProvider() context.ClientProvider {
 
 	// Create mock orderer with simple mock block
 	orderer := mocks.NewMockOrderer("", nil)
-	defer orderer.Close()
-
 	orderer.EnqueueForSendDeliver(mocks.NewSimpleMockBlock())
 	orderer.EnqueueForSendDeliver(common.Status_SUCCESS)
+	orderer.CloseQueue()
 
 	setupCustomOrderer(ctx, orderer)
 

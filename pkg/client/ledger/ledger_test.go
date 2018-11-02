@@ -72,7 +72,7 @@ func TestQueryBlockWithNilTargets(t *testing.T) {
 
 	_, err := lc.QueryBlock(1, WithTargets(peer1, nil))
 	if err == nil || !strings.Contains(err.Error(), "target is nil") {
-		t.Fatalf("Should have failed due to nil target")
+		t.Fatal("Should have failed due to nil target")
 	}
 }
 
@@ -305,28 +305,15 @@ func setupCustomTestContext(t *testing.T, discoveryService fab.DiscoveryService,
 		Orderers:  orderers,
 	}
 
-	ctx.InfraProvider().(*fcmocks.MockInfraProvider).SetCustomTransactor(&transactor)
-
 	testChannelSvc, err := setupTestChannelService(ctx, orderers)
 	assert.Nil(t, err, "Got error %s", err)
+	testChannelSvc.(*fcmocks.MockChannelService).SetTransactor(&transactor)
+	testChannelSvc.(*fcmocks.MockChannelService).SetDiscovery(discoveryService)
 
 	channelProvider := ctx.MockProviderContext.ChannelProvider()
 	channelProvider.(*fcmocks.MockChannelProvider).SetCustomChannelService(testChannelSvc)
 
-	discoveryProvider := ctx.MockProviderContext.DiscoveryProvider()
-	discoveryProvider.(*fcmocks.MockStaticDiscoveryProvider).SetCustomDiscoveryService(discoveryService)
-
 	return createClientContext(ctx)
-}
-
-func setupTestDiscovery(discErr error, peers []fab.Peer) (fab.DiscoveryService, error) {
-
-	mockDiscovery, err := txnmocks.NewMockDiscoveryProvider(discErr, peers)
-	if err != nil {
-		return nil, errors.WithMessage(err, "NewMockDiscoveryProvider failed")
-	}
-
-	return mockDiscovery.CreateDiscoveryService(channelID)
 }
 
 func setupLedgerClient(peers []fab.Peer, t *testing.T) *Client {
@@ -336,12 +323,7 @@ func setupLedgerClient(peers []fab.Peer, t *testing.T) *Client {
 
 func setupLedgerClientWithError(discErr error, verifyErr error, peers []fab.Peer, t *testing.T) *Client {
 
-	discoveryService, err := setupTestDiscovery(discErr, peers)
-	if err != nil {
-		t.Fatalf("Failed to setup discovery service: %s", err)
-	}
-
-	fabCtx := setupCustomTestContext(t, discoveryService, nil)
+	fabCtx := setupCustomTestContext(t, txnmocks.NewMockDiscoveryService(discErr, peers...), nil)
 
 	ctx := createChannelContext(fabCtx, channelID)
 

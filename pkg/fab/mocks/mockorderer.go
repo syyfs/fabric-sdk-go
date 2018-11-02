@@ -68,14 +68,12 @@ func delivery(o *MockOrderer) {
 		}
 		switch value.(type) {
 		case common.Status:
-			close(o.Deliveries)
-			return
 		case *common.Block:
 			o.Deliveries <- value.(*common.Block)
 		case error:
 			o.DeliveryErrors <- value.(error)
 		default:
-			panic(fmt.Sprintf("Value not *common.Block nor error: %v", value))
+			panic(fmt.Sprintf("Value not *common.Block nor error: %+v", value))
 		}
 	}
 }
@@ -105,8 +103,8 @@ func (o *MockOrderer) SendDeliver(ctx reqContext.Context, envelope *fab.SignedEn
 	return o.Deliveries, o.DeliveryErrors
 }
 
-// Close cleans up the instance and ends goroutines
-func (o *MockOrderer) Close() {
+// CloseQueue ends the mock broadcast and delivery queues
+func (o *MockOrderer) CloseQueue() {
 	close(o.BroadcastQueue)
 	close(o.DeliveryQueue)
 }
@@ -126,6 +124,6 @@ func (o *MockOrderer) EnqueueForSendDeliver(value interface{}) {
 	case error:
 		o.DeliveryQueue <- value
 	default:
-		panic(fmt.Sprintf("Value not *common.Block nor error: %v", value))
+		panic(fmt.Sprintf("Value not *common.Block nor error: %+v", value))
 	}
 }

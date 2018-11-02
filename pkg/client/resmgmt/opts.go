@@ -8,12 +8,14 @@ package resmgmt
 
 import (
 	reqContext "context"
+	"io"
 	"time"
 
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/errors/retry"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/context"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
 	"github.com/hyperledger/fabric-sdk-go/pkg/fab/comm"
+	"github.com/hyperledger/fabric-sdk-go/third_party/github.com/hyperledger/fabric/protos/common"
 	"github.com/pkg/errors"
 )
 
@@ -33,17 +35,17 @@ func WithTargets(targets ...fab.Peer) RequestOption {
 	}
 }
 
-// WithTargetURLs allows overriding of the target peers for the request.
-// Targets are specified by URL, and the SDK will create the underlying peer
+// WithTargetEndpoints allows overriding of the target peers for the request.
+// Targets are specified by name or URL, and the SDK will create the underlying peer
 // objects.
-func WithTargetURLs(urls ...string) RequestOption {
+func WithTargetEndpoints(keys ...string) RequestOption {
 	return func(ctx context.Client, opts *requestOptions) error {
 
 		var targets []fab.Peer
 
-		for _, url := range urls {
+		for _, url := range keys {
 
-			peerCfg, err := comm.NetworkPeerConfigFromURL(ctx.EndpointConfig(), url)
+			peerCfg, err := comm.NetworkPeerConfig(ctx.EndpointConfig(), url)
 			if err != nil {
 				return err
 			}
@@ -68,7 +70,7 @@ func WithTargetFilter(targetFilter fab.TargetFilter) RequestOption {
 	}
 }
 
-//WithTimeout encapsulates key value pairs of timeout type, timeout duration to Options
+// WithTimeout encapsulates key value pairs of timeout type, timeout duration to Options
 //if not provided, default timeout configuration from config will be used
 func WithTimeout(timeoutType fab.TimeoutType, timeout time.Duration) RequestOption {
 	return func(ctx context.Client, o *requestOptions) error {
@@ -80,15 +82,16 @@ func WithTimeout(timeoutType fab.TimeoutType, timeout time.Duration) RequestOpti
 	}
 }
 
-// WithOrdererURL allows an orderer to be specified for the request.
-// The orderer will be looked-up based on the name/url argument.
-func WithOrdererURL(nameOrURL string) RequestOption {
+// WithOrdererEndpoint allows an orderer to be specified for the request.
+// The orderer will be looked-up based on the key argument.
+// key argument can be a name or url
+func WithOrdererEndpoint(key string) RequestOption {
 
 	return func(ctx context.Client, opts *requestOptions) error {
 
-		ordererCfg, err := ctx.EndpointConfig().OrdererConfig(nameOrURL)
-		if err != nil {
-			return errors.Wrapf(err, "orderer not found for url : %s", nameOrURL)
+		ordererCfg, found := ctx.EndpointConfig().OrdererConfig(key)
+		if !found {
+			return errors.Errorf("orderer not found for url : %s", key)
 		}
 
 		orderer, err := ctx.InfraProvider().CreateOrdererFromConfig(ordererCfg)
@@ -105,6 +108,29 @@ func WithOrderer(orderer fab.Orderer) RequestOption {
 	return func(ctx context.Client, opts *requestOptions) error {
 		opts.Orderer = orderer
 		return nil
+	}
+}
+
+// WithConfigSignatures allows to provide pre defined signatures for resmgmt client's SaveChannel call
+func WithConfigSignatures(signatures ...*common.ConfigSignature) RequestOption {
+	return func(ctx context.Client, opts *requestOptions) error {
+		opts.Signatures = signatures
+		return nil
+	}
+}
+
+// withConfigSignature allows to provide a pre defined signature reader for resmgmt client's SaveChannel call
+//  The r reader must provide marshaled ConfigSignature content built using either one of the following calls:
+// * CreateConfigSignature call for a signature created internally by the SDK
+// * CreateConfigSignatureData call with signingBytes used for creating a signature by external tool (ex: Openssl)
+//
+// Note: call this function for as many times as there are signatures required for the channel update.
+// This option appends 1 ConfigSignature read from r to requestOptions.Signatures.
+//
+// Note : function not exported for now TODO: double check how to export this
+func withConfigSignature(r io.Reader) RequestOption { // nolint
+	return func(ctx context.Client, opts *requestOptions) error {
+		return createConfigSignatureOption(r, opts)
 	}
 }
 

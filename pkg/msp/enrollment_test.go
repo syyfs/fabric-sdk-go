@@ -7,10 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package msp
 
 import (
+	"fmt"
 	"strings"
 	"testing"
-
-	"fmt"
 
 	"github.com/golang/mock/gomock"
 	"github.com/hyperledger/fabric-sdk-go/internal/github.com/hyperledger/fabric-ca/util"
@@ -64,21 +63,18 @@ func TestGetSigningIdentityWithEnrollment(t *testing.T) {
 
 	endpointConfig, err := fab.ConfigFromBackend(configBackend...)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to read config: %v", err))
+		panic(fmt.Sprintf("Failed to read config: %s", err))
 	}
 
 	identityConfig, err := ConfigFromBackend(configBackend...)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to read config: %v", err))
+		panic(fmt.Sprintf("Failed to read config: %s", err))
 	}
 
-	clientConfig, err := identityConfig.Client()
-	if err != nil {
-		t.Fatalf("Unable to retrieve client config: %v", err)
-	}
-	netConfig, err := endpointConfig.NetworkConfig()
-	if err != nil {
-		t.Fatalf("NetworkConfig failed: %s", err)
+	clientConfig := identityConfig.Client()
+	netConfig := endpointConfig.NetworkConfig()
+	if netConfig == nil {
+		t.Fatal("Failed to get network config")
 	}
 	orgName := "Org1"
 	orgConfig, ok := netConfig.Organizations[strings.ToLower(orgName)]
@@ -127,7 +123,7 @@ func checkSigningIdentityWithEnrollment(cryptoConfig core.CryptoSuiteConfig, t *
 	prepareForEnroll(t, caClient, cs)
 	err = caClient.Enroll(userToEnroll, "enrollmentSecret")
 	if err != nil {
-		t.Fatalf("fabricCAClient Enroll failed: %v", err)
+		t.Fatalf("fabricCAClient Enroll failed: %s", err)
 	}
 	if err := checkSigningIdentity(identityMgr, userToEnroll); err != nil {
 		t.Fatalf("checkSigningIdentity shouldn't fail for user who hasn been just enrolled: %s", err)

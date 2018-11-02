@@ -36,9 +36,7 @@ type MockProviderContext struct {
 	identityManager        map[string]msp.IdentityManager
 	privateKey             core.Key
 	identity               msp.SigningIdentity
-	discoveryProvider      fab.DiscoveryProvider
 	localDiscoveryProvider fab.LocalDiscoveryProvider
-	selectionProvider      fab.SelectionProvider
 	infraProvider          fab.InfraProvider
 	channelProvider        fab.ChannelProvider
 }
@@ -78,7 +76,7 @@ func NewMockProviderContext(userOpts ...ProviderOption) *MockProviderContext {
 	for _, param := range userOpts {
 		err := param(&users)
 		if err != nil {
-			panic(fmt.Errorf("error creating MockProviderContext: %v", err))
+			panic(fmt.Errorf("error creating MockProviderContext: %s", err))
 		}
 	}
 
@@ -95,8 +93,6 @@ func NewMockProviderContext(userOpts ...ProviderOption) *MockProviderContext {
 		cryptoSuite:       &MockCryptoSuite{},
 		userStore:         &mspmocks.MockUserStore{},
 		identityManager:   im,
-		discoveryProvider: &MockStaticDiscoveryProvider{},
-		selectionProvider: &MockSelectionProvider{},
 		infraProvider:     &MockInfraProvider{},
 		channelProvider:   &MockChannelProvider{},
 		identity:          users.identity,
@@ -179,24 +175,19 @@ func (pc *MockProviderContext) Sign(msg []byte) ([]byte, error) {
 	return nil, nil
 }
 
-//DiscoveryProvider returns discovery provider
-func (pc *MockProviderContext) DiscoveryProvider() fab.DiscoveryProvider {
-	return pc.discoveryProvider
-}
-
 //LocalDiscoveryProvider returns a local discovery provider
 func (pc *MockProviderContext) LocalDiscoveryProvider() fab.LocalDiscoveryProvider {
 	return pc.localDiscoveryProvider
 }
 
-//SelectionProvider returns selection provider
-func (pc *MockProviderContext) SelectionProvider() fab.SelectionProvider {
-	return pc.selectionProvider
-}
-
 //ChannelProvider returns channel provider
 func (pc *MockProviderContext) ChannelProvider() fab.ChannelProvider {
 	return pc.channelProvider
+}
+
+//SetCustomChannelProvider sets custom channel provider for unit-test purposes
+func (pc *MockProviderContext) SetCustomChannelProvider(customChannelProvider fab.ChannelProvider) {
+	pc.channelProvider = customChannelProvider
 }
 
 //InfraProvider returns fabric provider
@@ -282,23 +273,10 @@ func (m MockContext) PrivateKey() core.Key {
 	return m.SigningIdentity.PrivateKey()
 }
 
-// NewMockContextWithCustomDiscovery creates a MockContext consisting of defaults and an identity
-func NewMockContextWithCustomDiscovery(ic msp.SigningIdentity, discPvdr fab.DiscoveryProvider) *MockContext {
-	mockCtx := NewMockProviderContext(WithProviderUser(ic.Identifier().ID, ic.Identifier().MSPID))
-	mockCtx.discoveryProvider = discPvdr
-	ctx := MockContext{
-		MockProviderContext: mockCtx,
-		SigningIdentity:     ic,
-	}
-	return &ctx
-}
-
 // MockChannelContext holds the client context plus channel-specific entities
 type MockChannelContext struct {
 	*MockContext
 	channelID string
-	Discovery fab.DiscoveryService
-	Selection fab.SelectionService
 	Channel   fab.ChannelService
 }
 
@@ -308,16 +286,6 @@ func NewMockChannelContext(context *MockContext, channelID string) *MockChannelC
 		MockContext: context,
 		channelID:   channelID,
 	}
-}
-
-// DiscoveryService returns a discovery service
-func (c *MockChannelContext) DiscoveryService() fab.DiscoveryService {
-	return c.Discovery
-}
-
-// SelectionService returns the selection service
-func (c *MockChannelContext) SelectionService() fab.SelectionService {
-	return c.Selection
 }
 
 // ChannelService returns the ChannelService

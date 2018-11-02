@@ -13,13 +13,14 @@ import (
 
 	"github.com/hyperledger/fabric-sdk-go/pkg/client/channel"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/core"
-	mspImpl "github.com/hyperledger/fabric-sdk-go/pkg/common/providers/msp"
 	"github.com/hyperledger/fabric-sdk-go/pkg/core/config"
+	"github.com/hyperledger/fabric-sdk-go/pkg/core/config/endpoint"
 	"github.com/hyperledger/fabric-sdk-go/pkg/core/config/lookup"
 	mockCore "github.com/hyperledger/fabric-sdk-go/pkg/core/mocks"
 	"github.com/hyperledger/fabric-sdk-go/pkg/fab/mocks"
-	"github.com/hyperledger/fabric-sdk-go/pkg/fabsdk/provider/fabpvdr"
+	"github.com/hyperledger/fabric-sdk-go/pkg/fabsdk/provider/chpvdr"
 	"github.com/hyperledger/fabric-sdk-go/pkg/msp"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -39,8 +40,8 @@ func TestNewDefaultSDK(t *testing.T) {
 func verifySDK(t *testing.T, sdk *FabricSDK) {
 
 	// Mock channel provider cache
-	sdk.provider.InfraProvider().(*fabpvdr.InfraProvider).SetChannelConfig(mocks.NewMockChannelCfg("mychannel"))
-	sdk.provider.InfraProvider().(*fabpvdr.InfraProvider).SetChannelConfig(mocks.NewMockChannelCfg("orgchannel"))
+	sdk.provider.ChannelProvider().(*chpvdr.ChannelProvider).SetChannelConfig(mocks.NewMockChannelCfg("mychannel"))
+	sdk.provider.ChannelProvider().(*chpvdr.ChannelProvider).SetChannelConfig(mocks.NewMockChannelCfg("orgchannel"))
 
 	// Get a common client context for the following tests
 	chCtx := sdk.ChannelContext("orgchannel", WithUser(sdkValidClientUser), WithOrg(sdkValidClientOrg2))
@@ -72,14 +73,14 @@ func TestNewDefaultTwoValidSDK(t *testing.T) {
 
 	// Mock channel provider cache
 
-	sdk1.provider.InfraProvider().(*fabpvdr.InfraProvider).SetChannelConfig(mocks.NewMockChannelCfg("mychannel"))
-	sdk1.provider.InfraProvider().(*fabpvdr.InfraProvider).SetChannelConfig(mocks.NewMockChannelCfg("orgchannel"))
+	sdk1.provider.ChannelProvider().(*chpvdr.ChannelProvider).SetChannelConfig(mocks.NewMockChannelCfg("mychannel"))
+	sdk1.provider.ChannelProvider().(*chpvdr.ChannelProvider).SetChannelConfig(mocks.NewMockChannelCfg("orgchannel"))
 
 	//prepare config backend for sdk2
 
 	customBackend, err := getCustomBackend()
 	if err != nil {
-		t.Fatalf("failed to get configbackend for test: %v", err)
+		t.Fatalf("failed to get configbackend for test: %s", err)
 	}
 	configProvider := func() ([]core.ConfigBackend, error) {
 		return customBackend, nil
@@ -91,7 +92,7 @@ func TestNewDefaultTwoValidSDK(t *testing.T) {
 	}
 
 	// Mock channel provider cache
-	sdk2.provider.InfraProvider().(*fabpvdr.InfraProvider).SetChannelConfig(mocks.NewMockChannelCfg("orgchannel"))
+	sdk2.provider.ChannelProvider().(*chpvdr.ChannelProvider).SetChannelConfig(mocks.NewMockChannelCfg("orgchannel"))
 
 	// Default sdk with two channels
 	configBackend, err := sdk1.Config()
@@ -138,10 +139,7 @@ func checkClientOrg(configBackend core.ConfigBackend, t *testing.T, orgName stri
 	if err != nil {
 		t.Fatalf("Error getting identity config : %s", err)
 	}
-	client, err := identityConfig.Client()
-	if err != nil {
-		t.Fatalf("Error getting client from config: %s", err)
-	}
+	client := identityConfig.Client()
 	if client.Organization != orgName {
 		t.Fatalf("Unexpected org in config: %s", client.Organization)
 	}
@@ -154,19 +152,30 @@ func getCustomBackend() ([]core.ConfigBackend, error) {
 	}
 
 	//read existing client config from config
-	clientConfig := &mspImpl.ClientConfig{}
 	configLookup := lookup.New(backend...)
-	err = configLookup.UnmarshalKey("client", clientConfig)
-	if err != nil {
-		return nil, err
+	res, ok := configLookup.Lookup("client")
+	if !ok {
+		return nil, errors.New("failed to created custom backend for test")
 	}
+	resMap := res.(map[string]interface{})
 	//update it
-	clientConfig.Organization = "org2"
+	resMap["organization"] = "org2"
 
 	//set it to backend map
 	backendMap := make(map[string]interface{})
-	backendMap["client"] = clientConfig
+	backendMap["client"] = resMap
 
 	backends := append([]core.ConfigBackend{}, &mockCore.MockConfigBackend{KeyValueMap: backendMap})
 	return append(backends, backend...), nil
+}
+
+// ClientConfig provides the definition of the client configuration
+type customClientConfig struct {
+	Organization string
+	TLSCerts     clientTLSConfig
+}
+
+type clientTLSConfig struct {
+	//Client TLS information
+	Client endpoint.TLSKeyPair
 }

@@ -8,7 +8,6 @@ package msp
 
 import (
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/core"
-	"github.com/hyperledger/fabric-sdk-go/pkg/core/config/endpoint"
 	logApi "github.com/hyperledger/fabric-sdk-go/pkg/core/logging/api"
 )
 
@@ -25,11 +24,11 @@ type IdentityManagerProvider interface {
 
 //IdentityConfig contains identity configurations
 type IdentityConfig interface {
-	Client() (*ClientConfig, error)
-	CAConfig(org string) (*CAConfig, error)
-	CAServerCerts(org string) ([][]byte, error)
-	CAClientKey(org string) ([]byte, error)
-	CAClientCert(org string) ([]byte, error)
+	Client() *ClientConfig
+	CAConfig(org string) (*CAConfig, bool)
+	CAServerCerts(org string) ([][]byte, bool)
+	CAClientKey(org string) ([]byte, bool)
+	CAClientCert(org string) ([]byte, bool)
 	CAKeyStorePath() string
 	CredentialStorePath() string
 }
@@ -39,7 +38,8 @@ type ClientConfig struct {
 	Organization    string
 	Logging         logApi.LoggingType
 	CryptoConfig    CCType
-	TLSCerts        endpoint.MutualTLSConfig
+	TLSKey          []byte
+	TLSCert         []byte
 	CredentialStore CredentialStoreType
 }
 
@@ -64,10 +64,13 @@ type EnrollCredentials struct {
 
 // CAConfig defines a CA configuration
 type CAConfig struct {
-	URL        string
-	TLSCACerts endpoint.MutualTLSConfig
-	Registrar  EnrollCredentials
-	CAName     string
+	URL              string
+	GRPCOptions      map[string]interface{}
+	Registrar        EnrollCredentials
+	CAName           string
+	TLSCAServerCerts [][]byte
+	TLSCAClientCert  []byte
+	TLSCAClientKey   []byte
 }
 
 // Providers represents a provider of MSP service.

@@ -68,11 +68,16 @@ func NewConnection(ctx fabcontext.Client, url string, opts ...options.Opt) (*GRP
 		return nil, errors.Wrapf(err, "could not connect to %s", url)
 	}
 
+	hash, err := comm.TLSCertHash(ctx.EndpointConfig())
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get tls cert hash")
+	}
+
 	return &GRPCConnection{
 		context:     ctx,
 		commManager: commManager,
 		conn:        grpcconn,
-		tlsCertHash: comm.TLSCertHash(ctx.EndpointConfig()),
+		tlsCertHash: hash,
 	}, nil
 }
 
@@ -84,7 +89,7 @@ func (c *GRPCConnection) ClientConn() *grpc.ClientConn {
 // Close closes the connection
 func (c *GRPCConnection) Close() {
 	if !c.setClosed() {
-		logger.Debugf("Already closed")
+		logger.Debug("Already closed")
 		return
 	}
 

@@ -15,6 +15,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	txnmocks "github.com/hyperledger/fabric-sdk-go/pkg/client/common/mocks"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/errors/status"
@@ -55,18 +56,30 @@ func TestQueryHandlerSuccess(t *testing.T) {
 }
 
 func TestExecuteTxHandlerSuccess(t *testing.T) {
+	ccID1 := "test"
+	ccID2 := "invokedcc"
+	ccID3 := "lscc"
+	ccID4 := "somescc"
+
 	//Sample request
-	request := Request{ChaincodeID: "test", Fcn: "invoke", Args: [][]byte{[]byte("move"), []byte("a"), []byte("b"), []byte("1")}}
+	request := Request{ChaincodeID: ccID1, Fcn: "invoke", Args: [][]byte{[]byte("move"), []byte("a"), []byte("b"), []byte("1")}}
+
+	// Add a chaincode filter that will ignore ccID4 when examining the RWSet
+	ccFilter := func(ccID string) bool {
+		return ccID != ccID4
+	}
 
 	//Prepare context objects for handler
-	requestContext := prepareRequestContext(request, Opts{}, t)
+	requestContext := prepareRequestContext(request, Opts{CCFilter: ccFilter}, t)
 
 	mockPeer1 := &fcmocks.MockPeer{MockName: "Peer1", MockURL: "http://peer1.com", MockRoles: []string{}, MockCert: nil, MockMSP: "Org1MSP", Status: 200, Payload: []byte("value")}
+	mockPeer1.SetRwSets(fcmocks.NewRwSet(ccID1), fcmocks.NewRwSet(ccID2), fcmocks.NewRwSet(ccID3), fcmocks.NewRwSet(ccID4))
 	mockPeer2 := &fcmocks.MockPeer{MockName: "Peer2", MockURL: "http://peer2.com", MockRoles: []string{}, MockCert: nil, MockMSP: "Org1MSP", Status: 200, Payload: []byte("value")}
+	mockPeer2.SetRwSets(mockPeer1.RwSets...)
 
 	clientContext := setupChannelClientContext(nil, nil, []fab.Peer{mockPeer1, mockPeer2}, t)
 
-	//Prepare mock eventhub
+	// Prepare mock event service
 	mockEventService := fcmocks.NewMockEventService()
 	clientContext.EventService = mockEventService
 
@@ -161,6 +174,19 @@ func TestEndorsementHandler(t *testing.T) {
 	handler.Handle(requestContext, clientContext)
 	assert.Nil(t, requestContext.Error)
 
+	optsProviderCalled := false
+	optsProvider := func() []fab.TxnHeaderOpt {
+		optsProviderCalled = true
+		var opts []fab.TxnHeaderOpt
+		opts = append(opts, fab.WithCreator([]byte("somecreator")))
+		opts = append(opts, fab.WithNonce([]byte("somenonce")))
+		return opts
+	}
+
+	handler = NewEndorsementHandlerWithOpts(nil, optsProvider)
+	handler.Handle(requestContext, clientContext)
+	assert.Nil(t, requestContext.Error)
+	assert.Truef(t, optsProviderCalled, "expecting opts provider to be called")
 }
 
 // Target filter
@@ -170,6 +196,24 @@ type filter struct {
 
 func (f *filter) Accept(p fab.Peer) bool {
 	return p.URL() == f.peer.URL()
+}
+
+// Target sorter
+type sorter struct {
+	preferredPeerIndex int
+}
+
+func (s *sorter) Sort(peers []fab.Peer) []fab.Peer {
+	var sortedPeers []fab.Peer
+	for i := s.preferredPeerIndex; i < len(peers); i++ {
+		sortedPeers = append(sortedPeers, peers[i])
+	}
+
+	for i := 0; i < s.preferredPeerIndex; i++ {
+		sortedPeers = append(sortedPeers, peers[i])
+	}
+
+	return sortedPeers
 }
 
 func TestResponseValidation(t *testing.T) {
@@ -232,40 +276,142 @@ func TestProposalProcessorHandlerPassDirectly(t *testing.T) {
 		t.Fatalf("Expecting 1 proposal processor but got %d", len(requestContext.Opts.Targets))
 	}
 	if requestContext.Opts.Targets[0] != peer2 {
-		t.Fatalf("Didn't get expected peers")
+		t.Fatal("Didn't get expected peers")
 	}
 }
 
 func TestProposalProcessorHandler(t *testing.T) {
 	peer1 := fcmocks.NewMockPeer("p1", "peer1:7051")
 	peer2 := fcmocks.NewMockPeer("p2", "peer2:7051")
-	discoveryPeers := []fab.Peer{peer1, peer2}
+	peer3 := fcmocks.NewMockPeer("p3", "peer3:7051")
+	discoveryPeers := []fab.Peer{peer1, peer2, peer3}
 
 	handler := NewProposalProcessorHandler()
 	request := Request{ChaincodeID: "testCC", Fcn: "invoke", Args: [][]byte{[]byte("query"), []byte("b")}}
-	requestContext := prepareRequestContext(request, Opts{}, t)
-	handler.Handle(requestContext, setupChannelClientContext(nil, nil, discoveryPeers, t))
-	if requestContext.Error != nil {
-		t.Fatalf("Got error: %s", requestContext.Error)
-	}
-	if len(requestContext.Opts.Targets) != len(discoveryPeers) {
-		t.Fatalf("Expecting %d proposal processors but got %d", len(discoveryPeers), len(requestContext.Opts.Targets))
-	}
-	if requestContext.Opts.Targets[0] != peer1 || requestContext.Opts.Targets[1] != peer2 {
-		t.Fatalf("Didn't get expected peers")
+
+	t.Run("Basic", func(t *testing.T) {
+		requestContext := prepareRequestContext(request, Opts{}, t)
+		handler.Handle(requestContext, setupChannelClientContext(nil, nil, discoveryPeers, t))
+		require.NoError(t, requestContext.Error)
+		require.Equal(t, len(discoveryPeers), len(requestContext.Opts.Targets), "Unexpected number of proposal processors")
+		assert.Falsef(t, requestContext.Opts.Targets[0] != peer1 || requestContext.Opts.Targets[1] != peer2, "Didn't get expected peers")
+	})
+
+	t.Run("Target Filter", func(t *testing.T) {
+		requestContext := prepareRequestContext(request, Opts{TargetFilter: &filter{peer: peer2}}, t)
+		handler.Handle(requestContext, setupChannelClientContext(nil, nil, discoveryPeers, t))
+		require.NoError(t, requestContext.Error)
+		require.Equal(t, 1, len(requestContext.Opts.Targets), "Unexpected number of proposal processors")
+		assert.Equalf(t, peer2.URL(), requestContext.Opts.Targets[0].URL(), "Expecting [%s] but got [%s]", peer2.URL(), requestContext.Opts.Targets[0].URL())
+	})
+
+	t.Run("Target Sorter", func(t *testing.T) {
+		for i := len(discoveryPeers) - 1; i >= 0; i-- {
+			requestContext := prepareRequestContext(request, Opts{TargetSorter: &sorter{preferredPeerIndex: i}}, t)
+			handler.Handle(requestContext, setupChannelClientContext(nil, nil, discoveryPeers, t))
+			require.NoError(t, requestContext.Error)
+			require.Equal(t, len(discoveryPeers), len(requestContext.Opts.Targets), "Unexpected number of proposal processors")
+			assert.Equalf(t, discoveryPeers[i].URL(), requestContext.Opts.Targets[0].URL(), "Expecting [%s] to be the first target but got [%s]", discoveryPeers[i].URL(), requestContext.Opts.Targets[0].URL())
+		}
+	})
+}
+
+func TestNewInvocationChain(t *testing.T) {
+	ccID1 := "cc1"
+	ccID2 := "cc2"
+	col1 := "col1"
+	col2 := "col2"
+
+	request := Request{
+		ChaincodeID: ccID1,
+		Fcn:         "invoke",
+		Args:        [][]byte{[]byte("query"), []byte("b")},
+		InvocationChain: []*fab.ChaincodeCall{
+			{
+				ID:          ccID2,
+				Collections: []string{col1},
+			},
+		},
 	}
 
-	requestContext = prepareRequestContext(request, Opts{TargetFilter: &filter{peer: peer2}}, t)
-	handler.Handle(requestContext, setupChannelClientContext(nil, nil, discoveryPeers, t))
-	if requestContext.Error != nil {
-		t.Fatalf("Got error: %s", requestContext.Error)
+	ccCalls := newInvocationChain(&RequestContext{Request: request})
+	require.Truef(t, len(ccCalls) == 2, "expecting 2 CC calls")
+	require.Equal(t, ccID1, ccCalls[0].ID)
+	require.Equal(t, ccID2, ccCalls[1].ID)
+	require.Emptyf(t, ccCalls[0].Collections, "expecting no collections for [%s]", ccID1)
+	require.Truef(t, len(ccCalls[1].Collections) == 1, "expecting 1 collection for [%s]", ccID2)
+
+	request = Request{
+		ChaincodeID: ccID1,
+		Fcn:         "invoke",
+		Args:        [][]byte{[]byte("query"), []byte("b")},
+		InvocationChain: []*fab.ChaincodeCall{
+			{
+				ID:          ccID1,
+				Collections: []string{col1, col2},
+			},
+			{
+				ID:          ccID2,
+				Collections: []string{col1},
+			},
+		},
 	}
-	if len(requestContext.Opts.Targets) != 1 {
-		t.Fatalf("Expecting 1 proposal processor but got %d", len(requestContext.Opts.Targets))
-	}
-	if requestContext.Opts.Targets[0] != peer2 {
-		t.Fatalf("Didn't get expected peers")
-	}
+
+	ccCalls = newInvocationChain(&RequestContext{Request: request})
+	require.Truef(t, len(ccCalls) == 2, "expecting 2 CC calls")
+	require.Equal(t, ccID1, ccCalls[0].ID)
+	require.Equal(t, ccID2, ccCalls[1].ID)
+	require.Truef(t, len(ccCalls[0].Collections) == 2, "expecting 2 collections for [%s]", ccID1)
+	require.Truef(t, len(ccCalls[1].Collections) == 1, "expecting 1 collection for [%s]", ccID2)
+}
+
+func TestMergeInvocationChains(t *testing.T) {
+	ccID1 := "cc1"
+	ccID2 := "cc2"
+	ccID3 := "cc3"
+	col1 := "col1"
+	col2 := "col2"
+	col3 := "col3"
+
+	ccCall1A := &fab.ChaincodeCall{ID: ccID1}
+	ccCall1B := &fab.ChaincodeCall{ID: ccID2, Collections: []string{col1, col3}}
+
+	ccCall2A := &fab.ChaincodeCall{ID: ccID1, Collections: []string{col1}}
+	ccCall2B := &fab.ChaincodeCall{ID: ccID2, Collections: []string{col1, col2}}
+	ccCall2C := &fab.ChaincodeCall{ID: ccID3}
+
+	acceptAllFilter := func(ccID string) bool { return true }
+
+	t.Run("No change to invocation chain", func(t *testing.T) {
+		invocChain, changed := mergeInvocationChains([]*fab.ChaincodeCall{ccCall1A}, []*fab.ChaincodeCall{ccCall1A}, acceptAllFilter)
+		assert.Falsef(t, changed, "Expecting invocation chain NOT to have changed")
+		require.NotEmptyf(t, invocChain, "Invocation chain is empty")
+		assert.Equalf(t, []*fab.ChaincodeCall{ccCall1A}, invocChain, "Expecting the invocation chain the be the same")
+	})
+
+	t.Run("Additional chaincodes and collections", func(t *testing.T) {
+		invocChain, changed := mergeInvocationChains([]*fab.ChaincodeCall{ccCall1A, ccCall1B}, []*fab.ChaincodeCall{ccCall2A, ccCall2B, ccCall2C}, acceptAllFilter)
+		assert.Truef(t, changed, "Expecting invocation chain to have changed")
+		require.NotEmptyf(t, invocChain, "Invocation chain is empty")
+		assert.Equalf(t, 3, len(invocChain), "Expecting 3 chaincode calls in the invocation chain")
+
+		assertContainsAll := func(t *testing.T, expectedColls []string, colls []string, ccID string) {
+			for _, coll := range expectedColls {
+				assert.Containsf(t, colls, coll, ccID+" does not contain all collections")
+			}
+		}
+
+		for _, ccCall := range invocChain {
+			switch ccCall.ID {
+			case ccID1:
+				assertContainsAll(t, []string{col1}, ccCall.Collections, ccID1)
+			case ccID2:
+				assertContainsAll(t, []string{col1, col2, col3}, ccCall.Collections, ccID2)
+			case ccID3:
+				assertContainsAll(t, nil, ccCall.Collections, ccID3)
+			}
+		}
+	})
 }
 
 //prepareHandlerContexts prepares context objects for handlers
@@ -283,22 +429,17 @@ func prepareRequestContext(request Request, opts Opts, t *testing.T) *RequestCon
 			return opts.TargetFilter.Accept(peer)
 		}
 	}
+	if opts.TargetSorter != nil {
+		requestContext.PeerSorter = func(peers []fab.Peer) []fab.Peer {
+			return opts.TargetSorter.Sort(peers)
+		}
+	}
 
 	return requestContext
 }
 
 func setupChannelClientContext(discErr error, selectionErr error, peers []fab.Peer, t *testing.T) *ClientContext {
 	membership := fcmocks.NewMockMembership()
-
-	discoveryService, err := setupTestDiscovery(discErr, nil)
-	if err != nil {
-		t.Fatalf("Failed to setup discovery service: %s", err)
-	}
-
-	selectionService, err := setupTestSelection(selectionErr, peers)
-	if err != nil {
-		t.Fatalf("Failed to setup discovery service: %s", err)
-	}
 
 	ctx := setupTestContext()
 	orderer := fcmocks.NewMockOrderer("", nil)
@@ -310,8 +451,8 @@ func setupChannelClientContext(discErr error, selectionErr error, peers []fab.Pe
 
 	return &ClientContext{
 		Membership: membership,
-		Discovery:  discoveryService,
-		Selection:  selectionService,
+		Discovery:  txnmocks.NewMockDiscoveryService(discErr),
+		Selection:  txnmocks.NewMockSelectionService(selectionErr, peers...),
 		Transactor: &transactor,
 	}
 
@@ -321,23 +462,4 @@ func setupTestContext() context.Client {
 	user := mspmocks.NewMockSigningIdentity("test", "test")
 	ctx := fcmocks.NewMockContext(user)
 	return ctx
-}
-
-func setupTestDiscovery(discErr error, peers []fab.Peer) (fab.DiscoveryService, error) {
-
-	mockDiscovery, err := txnmocks.NewMockDiscoveryProvider(discErr, peers)
-	if err != nil {
-		return nil, errors.WithMessage(err, "NewMockDiscoveryProvider failed")
-	}
-	return mockDiscovery.CreateDiscoveryService("mychannel")
-}
-
-func setupTestSelection(discErr error, peers []fab.Peer) (*txnmocks.MockSelectionService, error) {
-
-	mockSelection, err := txnmocks.NewMockSelectionProvider(discErr, peers)
-	if err != nil {
-		return nil, errors.WithMessage(err, "NewMockSelectinProvider failed")
-	}
-
-	return mockSelection.CreateSelectionService("mychannel")
 }

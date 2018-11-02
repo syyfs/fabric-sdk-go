@@ -12,6 +12,7 @@ import (
 	"time"
 
 	discclient "github.com/hyperledger/fabric-sdk-go/internal/github.com/hyperledger/fabric/discovery/client"
+	coptions "github.com/hyperledger/fabric-sdk-go/pkg/common/options"
 	contextAPI "github.com/hyperledger/fabric-sdk-go/pkg/common/providers/context"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
 	fabdiscovery "github.com/hyperledger/fabric-sdk-go/pkg/fab/discovery"
@@ -41,8 +42,21 @@ type service struct {
 
 type queryPeers func() ([]fab.Peer, error)
 
-func newService(query queryPeers, options options) *service {
-	logger.Debugf("Creating new dynamic discovery service with cache refresh interval %s", options.refreshInterval)
+func newService(config fab.EndpointConfig, query queryPeers, opts ...coptions.Opt) *service {
+	options := options{}
+	coptions.Apply(&options, opts)
+
+	if options.refreshInterval == 0 {
+		options.refreshInterval = config.Timeout(fab.DiscoveryServiceRefresh)
+	}
+
+	if options.responseTimeout == 0 {
+		options.responseTimeout = config.Timeout(fab.DiscoveryResponse)
+	}
+
+	logger.Debugf("Cache refresh interval: %s", options.refreshInterval)
+	logger.Debugf("Deliver service response timeout: %s", options.responseTimeout)
+
 	return &service{
 		responseTimeout: options.responseTimeout,
 		peersRef: lazyref.New(
@@ -54,8 +68,8 @@ func newService(query queryPeers, options options) *service {
 	}
 }
 
-// Initialize initializes the service with local context
-func (s *service) Initialize(ctx contextAPI.Client) error {
+// initialize initializes the service with client context
+func (s *service) initialize(ctx contextAPI.Client) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
@@ -67,7 +81,7 @@ func (s *service) Initialize(ctx contextAPI.Client) error {
 
 	discoveryClient, err := clientProvider(ctx)
 	if err != nil {
-		return errors.Wrapf(err, "error creating discover client")
+		return errors.Wrap(err, "error creating discover client")
 	}
 
 	logger.Debugf("Initializing with context: %#v", ctx)
@@ -78,7 +92,7 @@ func (s *service) Initialize(ctx contextAPI.Client) error {
 
 // Close stops the lazyref background refresh
 func (s *service) Close() {
-	logger.Debugf("Closing peers ref...")
+	logger.Debug("Closing peers ref...")
 	s.peersRef.Close()
 }
 
@@ -110,23 +124,31 @@ func (s *service) discoveryClient() discoveryClient {
 func asPeers(ctx contextAPI.Client, endpoints []*discclient.Peer) []fab.Peer {
 	var peers []fab.Peer
 	for _, endpoint := range endpoints {
-		url := endpoint.AliveMessage.GetAliveMsg().Membership.Endpoint
-
-		logger.Debugf("Adding endpoint [%s]", url)
-
-		peerConfig, err := ctx.EndpointConfig().PeerConfig(url)
-		if err != nil {
-			logger.Warnf("Error getting peer config for url [%s]: %s", err)
-			continue
-		}
-
-		peer, err := ctx.InfraProvider().CreatePeerFromConfig(&fab.NetworkPeer{PeerConfig: *peerConfig, MSPID: endpoint.MSPID})
-		if err != nil {
-			logger.Warnf("Unable to create peer config for [%s]: %s", url, err)
+		peer, ok := asPeer(ctx, endpoint)
+		if !ok {
 			continue
 		}
 		peers = append(peers, peer)
 	}
-
 	return peers
+}
+
+func asPeer(ctx contextAPI.Client, endpoint *discclient.Peer) (fab.Peer, bool) {
+	url := endpoint.AliveMessage.GetAliveMsg().Membership.Endpoint
+
+	logger.Debugf("Adding endpoint [%s]", url)
+
+	peerConfig, found := ctx.EndpointConfig().PeerConfig(url)
+	if !found {
+		logger.Debugf("Peer config not found for url [%s]", url)
+		return nil, false
+	}
+
+	peer, err := ctx.InfraProvider().CreatePeerFromConfig(&fab.NetworkPeer{PeerConfig: *peerConfig, MSPID: endpoint.MSPID})
+	if err != nil {
+		logger.Warnf("Unable to create peer config for [%s]: %s", url, err)
+		return nil, false
+	}
+
+	return peer, true
 }

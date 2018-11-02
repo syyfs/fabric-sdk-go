@@ -35,10 +35,10 @@ func (m *MockIdentityConfig) EXPECT() *MockIdentityConfigMockRecorder {
 }
 
 // CAClientCert mocks base method
-func (m *MockIdentityConfig) CAClientCert(arg0 string) ([]byte, error) {
+func (m *MockIdentityConfig) CAClientCert(arg0 string) ([]byte, bool) {
 	ret := m.ctrl.Call(m, "CAClientCert", arg0)
 	ret0, _ := ret[0].([]byte)
-	ret1, _ := ret[1].(error)
+	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
 
@@ -48,10 +48,10 @@ func (mr *MockIdentityConfigMockRecorder) CAClientCert(arg0 interface{}) *gomock
 }
 
 // CAClientKey mocks base method
-func (m *MockIdentityConfig) CAClientKey(arg0 string) ([]byte, error) {
+func (m *MockIdentityConfig) CAClientKey(arg0 string) ([]byte, bool) {
 	ret := m.ctrl.Call(m, "CAClientKey", arg0)
 	ret0, _ := ret[0].([]byte)
-	ret1, _ := ret[1].(error)
+	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
 
@@ -61,10 +61,10 @@ func (mr *MockIdentityConfigMockRecorder) CAClientKey(arg0 interface{}) *gomock.
 }
 
 // CAConfig mocks base method
-func (m *MockIdentityConfig) CAConfig(arg0 string) (*msp.CAConfig, error) {
+func (m *MockIdentityConfig) CAConfig(arg0 string) (*msp.CAConfig, bool) {
 	ret := m.ctrl.Call(m, "CAConfig", arg0)
 	ret0, _ := ret[0].(*msp.CAConfig)
-	ret1, _ := ret[1].(error)
+	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
 
@@ -86,10 +86,10 @@ func (mr *MockIdentityConfigMockRecorder) CAKeyStorePath() *gomock.Call {
 }
 
 // CAServerCerts mocks base method
-func (m *MockIdentityConfig) CAServerCerts(arg0 string) ([][]byte, error) {
+func (m *MockIdentityConfig) CAServerCerts(arg0 string) ([][]byte, bool) {
 	ret := m.ctrl.Call(m, "CAServerCerts", arg0)
 	ret0, _ := ret[0].([][]byte)
-	ret1, _ := ret[1].(error)
+	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
 
@@ -99,11 +99,10 @@ func (mr *MockIdentityConfigMockRecorder) CAServerCerts(arg0 interface{}) *gomoc
 }
 
 // Client mocks base method
-func (m *MockIdentityConfig) Client() (*msp.ClientConfig, error) {
+func (m *MockIdentityConfig) Client() *msp.ClientConfig {
 	ret := m.ctrl.Call(m, "Client")
 	ret0, _ := ret[0].(*msp.ClientConfig)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	return ret0
 }
 
 // Client indicates an expected call of Client
@@ -144,6 +143,23 @@ func NewMockIdentityManager(ctrl *gomock.Controller) *MockIdentityManager {
 // EXPECT returns an object that allows the caller to indicate expected use
 func (m *MockIdentityManager) EXPECT() *MockIdentityManagerMockRecorder {
 	return m.recorder
+}
+
+// CreateSigningIdentity mocks base method
+func (m *MockIdentityManager) CreateSigningIdentity(arg0 ...msp.SigningIdentityOption) (msp.SigningIdentity, error) {
+	varargs := []interface{}{}
+	for _, a := range arg0 {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "CreateSigningIdentity", varargs...)
+	ret0, _ := ret[0].(msp.SigningIdentity)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateSigningIdentity indicates an expected call of CreateSigningIdentity
+func (mr *MockIdentityManagerMockRecorder) CreateSigningIdentity(arg0 ...interface{}) *gomock.Call {
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSigningIdentity", reflect.TypeOf((*MockIdentityManager)(nil).CreateSigningIdentity), arg0...)
 }
 
 // GetSigningIdentity mocks base method

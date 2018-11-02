@@ -23,10 +23,10 @@ You're good to go, happy coding! Check out the examples for usage demonstrations
 ### Examples
 
 - [E2E Test](test/integration/e2e/end_to_end.go): Basic example that uses SDK to query and execute transaction
-- [Ledger Query Test](test/integration/sdk/ledger_queries_test.go): Basic example that uses SDK to query a channel's underlying ledger
-- [Multi Org Test](test/integration/orgs/multiple_orgs_test.go): An example that has multiple organisations involved in transaction
-- [Dynamic Endorser Selection](test/integration/sdk/sdk_provider_test.go): An example that uses dynamic endorser selection (based on chaincode policy)
-- [E2E PKCS11 Test](test/integration/pkcs11/e2e_test.go): E2E Test using a PKCS11 crypto suite and configuration
+- [Ledger Query Test](test/integration/pkg/client/ledger/ledger_queries_test.go): Basic example that uses SDK to query a channel's underlying ledger
+- [Multi Org Test](test/integration/e2e/orgs/multiple_orgs_test.go): An example that has multiple organisations involved in transaction
+- [Dynamic Endorser Selection](test/integration/pkg/fabsdk/provider/sdk_provider_test.go): An example that uses dynamic endorser selection (based on chaincode policy)
+- [E2E PKCS11 Test](test/integration/e2e/pkcs11/e2e_test.go): E2E Test using a PKCS11 crypto suite and configuration
 - [CLI](https://github.com/securekey/fabric-examples/tree/master/fabric-cli/): An example CLI for Fabric built with the Go SDK.
 - More examples needed!
 
@@ -40,27 +40,17 @@ You're good to go, happy coding! Check out the examples for usage demonstrations
 
 ### Current Compatibility
 The SDK's integration tests run against three tagged Fabric versions:
-- prev (currently v1.0.6)
-- stable (currently v1.1.0)
+- prev (currently v1.2.1)
+- stable (currently v1.3.0)
 - prerelease (currently disabled)
 
 Additionally for development purposes integration tests also run against the devstable Fabric version as needed.
 
-### v1.0 Notes
-The SDK uses the Fabric v1.1 delivery service as the default event mechanism. When using Fabric v1.0, you must override this default by setting the event service type in the config:
-
-```
-client:
-  peer:
-    eventService:
-      type: eventhub
-```
-
 ### Retired versions
 When the 'prev' code level is updated, the last tested fabric-sdk-go commit or tag is listed below.
 
-- fabric v1.0.0 & fabric-ca v1.0.0
-  - fabric-sdk-go: 79b343ba
+- fabric v1.2 & fabric-ca v1.2
+- fabric-sdk-go: ea10f6c
 
 ### Running the test suite
 
@@ -69,7 +59,7 @@ When the 'prev' code level is updated, the last tested fabric-sdk-go commit or t
 cd $GOPATH/src/github.com/hyperledger/fabric-sdk-go/
 
 # Optional - Automatically install Go tools used by test suite
-# make depend-install
+# make depend
 
 # Running test suite
 make
@@ -105,13 +95,13 @@ To contribute patches, you will need to clone (or add a remote) from [Gerrit](ht
 # In the Fabric SDK Go directory
 cd $GOPATH/src/github.com/hyperledger/fabric-sdk-go/
 
-# Ensure dependencies are installed
-make depend
+# Optional - Automatically install Go tools used by test suite
+# make depend
 
-# Running code checks (license, linting, spelling, etc)
-make checks
+# Optional - Running only code checks (linters, license, spelling, etc)
+# make checks
 
-# Running all unit tests
+# Running all unit tests and checks
 make unit-test
 
 # Running all integration tests
@@ -173,10 +163,10 @@ make integration-tests-local
 # which has the Fabric CA server, orderer and peers pointed to localhost
 # It is also possible to run integration tests using go test directly. For example:
 #cd $GOPATH/src/github.com/hyperledger/fabric-sdk-go/test/integration/
-#go -args testLocal=true test
+#go test -args testLocal=true
 
 #cd $GOPATH/src/github.com/hyperledger/fabric-sdk-go/test/integration/orgs
-#go -args testLocal=true test
+#go test -args testLocal=true 
 
 # You should review test/scripts/integration.sh for options and details.
 # Note: you should generally prefer the scripted version to setup parameters for you.

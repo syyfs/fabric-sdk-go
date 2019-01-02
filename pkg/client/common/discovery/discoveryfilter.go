@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package discovery
 
 import (
+	client "github.com/hyperledger/fabric-sdk-go/internal/github.com/hyperledger/fabric/discovery/client"
 	"github.com/hyperledger/fabric-sdk-go/pkg/common/providers/fab"
 )
 
@@ -46,4 +47,12 @@ func filterTargets(peers []fab.Peer, filter fab.TargetFilter) []fab.Peer {
 	}
 
 	return filteredPeers
+}
+
+func NewRequest() *client.Request {
+	return client.NewRequest()
+}
+
+func NewFilter() client.Filter {
+	return client.NewFilter(client.NoPriorities, client.NoExclusion)
 }

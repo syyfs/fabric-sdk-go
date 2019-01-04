@@ -28,10 +28,10 @@ func newCCCall(ccID string, collections ...string) *fabdiscovery.ChaincodeCall {
 	}
 }
 
-func GetEndorsers(ctx fabcontext.Client, client *discovery.Client, peerConfig fab.PeerConfig) {
+func GetEndorsers(ctx fabcontext.Client, client *discovery.Client, peerConfig fab.PeerConfig) (discclient.Endorsers, error) {
 
 	interest := newInterest(newCCCall("mycc"))
-	_, err := retry.NewInvoker(retry.New(retry.TestRetryOpts)).Invoke(
+	endorsers, err := retry.NewInvoker(retry.New(retry.TestRetryOpts)).Invoke(
 		func() (interface{}, error) {
 			chanResp, err := sendEndorserQuery(ctx, client, interest, peerConfig)
 			if err != nil && strings.Contains(err.Error(), "failed constructing descriptor for chaincodes") {
@@ -44,12 +44,15 @@ func GetEndorsers(ctx fabcontext.Client, client *discovery.Client, peerConfig fa
 		},
 	)
 	if err != nil {
-		fmt.Errorf("==== sendEndorserQuery faild! err:%s\n", err)
+		return nil, fmt.Errorf("==== sendEndorserQuery faild! err:%s\n", err)
 	}
+	endorser := endorsers.(discclient.Endorsers)
+
+	return endorser, err
 
 }
 
-func sendEndorserQuery(ctx fabcontext.Client, client *discovery.Client, interest *fabdiscovery.ChaincodeInterest, peerConfig fab.PeerConfig) (discclient.ChannelResponse, error) {
+func sendEndorserQuery(ctx fabcontext.Client, client *discovery.Client, interest *fabdiscovery.ChaincodeInterest, peerConfig fab.PeerConfig) (discclient.Endorsers, error) {
 	req, err := discclient.NewRequest().OfChannel(orgChannelID).AddEndorsersQuery(interest)
 
 	reqCtx, cancel := context.NewRequest(ctx, context.WithTimeout(10*time.Second))
@@ -63,17 +66,15 @@ func sendEndorserQuery(ctx fabcontext.Client, client *discovery.Client, interest
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("*******************************\n")
 	//asURLs(endorsers)
-	PrintPeerInfo(endorsers)
 
-	fmt.Printf("*******************************\n")
-
-	return chanResp, nil
+	return endorsers, nil
 }
 
-func PrintPeerInfo(peers []*discclient.Peer) {
+func PrintConfig(peers []*discclient.Peer, result *fabdiscovery.ConfigResult) {
+
 	for _, endorser := range peers {
+		fmt.Printf("===========================================\n")
 		aliveMsg := endorser.AliveMessage.GetAliveMsg()
 		fmt.Printf("---- aliveMsg.Membership.Endpoint:[%s]\n", aliveMsg.Membership.Endpoint)
 
@@ -82,8 +83,45 @@ func PrintPeerInfo(peers []*discclient.Peer) {
 			panic(fmt.Errorf("failed unmarshaling peer's identity, err:%s \n", err))
 		}
 
-		fmt.Printf(" ---- endorser.Mspid:[%#+v] \n", sID.Mspid)
-		fmt.Printf(" ---- endorser.cert:[%#+v] \n", string(sID.IdBytes))
+		fmt.Printf("---- endorser.Mspid: %s \n", sID.Mspid)
+		fmt.Printf("---- endorser.IdentityCert: \n")
+		fmt.Printf("%s \n", string(sID.IdBytes))
+		org := result.Msps[sID.Mspid]
+		fmt.Printf("---- endorser belong to organization Name : %s \n", org.Name)
+		for _, tlscacert := range org.TlsRootCerts {
+			fmt.Printf("---- endorser belong to organization TlsRootCerts: \n", string(tlscacert))
+			fmt.Printf("%s \n", string(tlscacert))
+		}
+		for _, cacert := range org.RootCerts {
+			fmt.Printf("---- endorser belong to organization RootCerts:  \n")
+			fmt.Printf("%s \n", string(cacert))
+		}
+
+		stateInfo := endorser.StateInfoMessage.GetStateInfo()
+
+		fmt.Printf("--- Ledger Height: %d \n", stateInfo.Properties.LedgerHeight)
+		fmt.Printf("--- Chaincodes: \n")
+		for _, cc := range stateInfo.Properties.Chaincodes {
+			fmt.Printf("------ %s:%s \n", cc.Name, cc.Version)
+		}
+
+	}
+
+}
+
+func PrintPeerInfo(peers []*discclient.Peer) {
+	for _, endorser := range peers {
+		fmt.Printf("===========================================\n")
+		aliveMsg := endorser.AliveMessage.GetAliveMsg()
+		fmt.Printf("---- aliveMsg.Membership.Endpoint:[%s]\n", aliveMsg.Membership.Endpoint)
+
+		sID := &msp.SerializedIdentity{}
+		if err := proto.Unmarshal(endorser.Identity, sID); err != nil {
+			panic(fmt.Errorf("failed unmarshaling peer's identity, err:%s \n", err))
+		}
+
+		fmt.Printf("---- endorser.Mspid: %s \n", sID.Mspid)
+		fmt.Printf("---- endorser.cert: %s \n", string(sID.IdBytes))
 
 		stateInfo := endorser.StateInfoMessage.GetStateInfo()
 
